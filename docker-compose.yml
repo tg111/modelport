@@ -1,0 +1,11 @@
+services:
+  modelport:
+    build: .
+    container_name: modelport
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "${HOST_PORT:-8880}:${PORT:-8880}"
+    volumes:
+      - ./data:/app/data

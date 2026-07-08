@@ -1,0 +1,11 @@
+node_modules
+.local-node
+data
+.git
+.env
+.env.*
+.DS_Store
+.claude
+public_backup
+aa.txt
+npm-debug.log*

@@ -1,0 +1,13 @@
+node_modules/
+.local-node/
+data/
+config.json
+.env
+.env.*
+!.env.example
+.DS_Store
+.claude/
+public_backup/
+aa.txt
+npm-debug.log*
+.idea/
