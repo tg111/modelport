@@ -58,7 +58,7 @@ docker compose up -d --build
 ```dotenv
 PORT=8880
 HOST_PORT=8880
-PROXY_API_KEY=change-me
+PROXY_API_KEY=pwd
 ```
 
 `PORT` 是容器或 Node 进程内部监听端口，`HOST_PORT` 是 Docker Compose 暴露到宿主机的端口。Compose 会自动读取项目根目录 `.env` 来替换 `docker-compose.yml` 里的端口变量。
@@ -89,7 +89,7 @@ wire_api = "responses"
 设置环境变量：
 
 ```bash
-export MODELPORT_API_KEY="change-me"
+export MODELPORT_API_KEY="pwd"
 ```
 
 后台中启用的代理模型名会出现在 `/v1/models`。客户端请求某个代理模型名时，本服务会把它映射到渠道里的上游模型 ID。
