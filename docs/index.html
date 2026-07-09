@@ -4,131 +4,114 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ModelPort Demo</title>
-  <meta name="description" content="ModelPort static GitHub Pages demo.">
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./app.css">
 </head>
 <body>
-  <header class="topbar">
-    <a class="brand" href="./" aria-label="ModelPort demo">
-      <span class="brand-mark">MP</span>
-      <span>
-        <strong>ModelPort</strong>
-        <small>AI API Gateway</small>
-      </span>
-    </a>
-    <nav class="nav" aria-label="页面导航">
-      <a href="#channels">渠道</a>
-      <a href="#models">模型</a>
-      <a href="#usage">记录</a>
-      <a class="github-link" href="https://github.com/tg111/modelport" target="_blank" rel="noreferrer">GitHub</a>
-    </nav>
-  </header>
-
-  <main>
-    <section class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">OpenAI-compatible gateway for Codex</p>
+  <div id="appLayout">
+    <header class="topbar">
+      <div class="topbar-brand">
         <h1>ModelPort</h1>
-        <p class="hero-text">统一管理多个 AI API 渠道、代理模型名、轮询策略和调用记录。这个页面是 GitHub Pages 静态演示，不会连接真实密钥或后端服务。</p>
-        <div class="hero-actions">
-          <a class="btn primary" href="#dashboard">查看演示</a>
-          <a class="btn secondary" href="https://github.com/tg111/modelport#quick-start" target="_blank" rel="noreferrer">快速开始</a>
-        </div>
+        <p>Codex、聊天和图片接口的渠道管理、代理模型名和使用记录</p>
       </div>
-      <div class="status-panel" aria-label="ModelPort runtime summary">
-        <div>
-          <span class="metric-label">Enabled aliases</span>
-          <strong id="aliasCount">4</strong>
-        </div>
-        <div>
-          <span class="metric-label">Healthy channels</span>
-          <strong id="healthyCount">3</strong>
-        </div>
-        <div>
-          <span class="metric-label">Requests today</span>
-          <strong id="requestCount">128</strong>
-        </div>
+      <div class="topbar-actions">
+        <a class="icon-btn" href="https://github.com/tg111/modelport" target="_blank" rel="noreferrer" aria-label="GitHub" title="GitHub">
+          <svg class="github-icon" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.02c-3.2.69-3.87-1.37-3.87-1.37-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.76 2.7 1.25 3.36.96.1-.75.4-1.25.73-1.54-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.18-3.08-.12-.29-.51-1.46.11-3.04 0 0 .97-.31 3.17 1.18.92-.26 1.9-.38 2.88-.39.98.01 1.96.13 2.88.39 2.2-1.49 3.16-1.18 3.16-1.18.63 1.58.24 2.75.12 3.04.74.8 1.18 1.83 1.18 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.51 11.51 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"></path>
+          </svg>
+        </a>
+        <a class="btn ghost" href="https://github.com/tg111/modelport#quick-start" target="_blank" rel="noreferrer">部署</a>
       </div>
-    </section>
+    </header>
 
-    <section id="dashboard" class="dashboard">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Live-shaped demo</p>
-          <h2>管理台预览</h2>
-        </div>
-        <div class="toolbar" aria-label="演示操作">
-          <button id="rotateBtn" class="icon-btn" type="button" title="模拟轮询">↻</button>
-          <button id="failoverBtn" class="icon-btn" type="button" title="模拟故障切换">!</button>
-        </div>
-      </div>
-
-      <div class="overview-grid">
-        <article class="summary-tile">
-          <span>Responses API</span>
-          <strong>native</strong>
-          <small>流式和非流式透传</small>
-        </article>
-        <article class="summary-tile">
-          <span>Chat bridge</span>
-          <strong>ready</strong>
-          <small>兼容 Chat Completions 渠道</small>
-        </article>
-        <article class="summary-tile">
-          <span>Image APIs</span>
-          <strong>proxied</strong>
-          <small>生成和编辑接口中转</small>
-        </article>
-      </div>
-
-      <section id="channels" class="work-surface">
-        <div class="surface-head">
+    <div class="content-wrap">
+      <section class="section">
+        <div class="section-header">
           <h3>渠道管理</h3>
-          <label class="search">
-            <span>搜索</span>
-            <input id="channelSearch" type="search" placeholder="渠道名称、API 地址或模型别名">
-          </label>
+          <div class="header-actions">
+            <button id="refreshBtn" type="button" class="btn ghost">刷新</button>
+            <button id="addChannelBtn" type="button" class="btn primary">添加渠道</button>
+          </div>
         </div>
-        <div id="channelList" class="channel-list"></div>
+        <div class="channel-filter-bar">
+          <label class="filter-search-wrap">
+            <span class="filter-search-icon" aria-hidden="true">⌕</span>
+            <input id="channelSearch" type="search" placeholder="输入渠道名称或 API 地址">
+          </label>
+          <div class="filter-sort-wrap">
+            <span>排序</span>
+            <select id="channelSort" class="filter-pill sort-select">
+              <option value="created_desc">最新添加优先</option>
+              <option value="created_asc">最早添加优先</option>
+              <option value="success_desc">成功多的优先</option>
+              <option value="success_asc">成功少的优先</option>
+            </select>
+          </div>
+          <div class="model-filter-dropdown" id="proxyModelDropdown">
+            <button id="proxyModelFilterBtn" type="button" class="filter-pill model-filter-btn">
+              <span class="filter-slider-icon" aria-hidden="true">☷</span>
+              <span id="proxyModelFilterText">0/0 个模型</span>
+              <span class="filter-chevron" aria-hidden="true">⌄</span>
+            </button>
+            <div id="proxyModelFilterPanel" class="model-filter-panel hidden">
+              <div class="model-filter-panel-actions">
+                <button id="selectAllProxyModels" type="button">全选</button>
+                <button id="clearChannelFilters" type="button">清空</button>
+              </div>
+              <div id="proxyModelFilterList" class="model-filter-list"></div>
+            </div>
+          </div>
+        </div>
+        <div id="channels" class="channel-list"></div>
       </section>
 
-      <div class="split">
-        <section id="models" class="work-surface">
-          <div class="surface-head compact">
-            <h3>模型别名</h3>
-            <span class="pill">Codex base_url /v1</span>
+      <section class="section">
+        <div class="section-header">
+          <h3>使用记录</h3>
+          <div class="header-actions">
+            <select id="usageStatusFilter" class="input-sm">
+              <option value="all">全部</option>
+              <option value="success">仅成功</option>
+              <option value="failed">仅失败</option>
+            </select>
+            <button id="usageBtn" type="button" class="btn ghost">刷新</button>
+            <button id="clearUsageBtn" type="button" class="btn danger">清空记录</button>
           </div>
-          <div id="modelList" class="model-list"></div>
-        </section>
-
-        <section id="usage" class="work-surface">
-          <div class="surface-head compact">
-            <h3>使用记录</h3>
-            <span id="usageBadge" class="pill">recent</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>时间</th>
+                <th>状态</th>
+                <th>模型</th>
+                <th>源模型</th>
+                <th>渠道</th>
+                <th>错误</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="usageRows"></tbody>
+          </table>
+        </div>
+        <div class="pagination-bar" id="usagePagination">
+          <div class="pagination-summary" id="usagePageSummary">第 1 / 1 页，共 0 条</div>
+          <div class="pagination-actions">
+            <select id="usagePageSize" class="input-sm" aria-label="每页条数">
+              <option value="10">10 条/页</option>
+              <option value="20" selected>20 条/页</option>
+              <option value="50">50 条/页</option>
+              <option value="100">100 条/页</option>
+            </select>
+            <button id="usagePrevPage" type="button" class="btn ghost">上一页</button>
+            <button id="usageNextPage" type="button" class="btn ghost">下一页</button>
           </div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>模型</th>
-                  <th>渠道</th>
-                  <th>状态</th>
-                </tr>
-              </thead>
-              <tbody id="usageRows"></tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-    </section>
-  </main>
+        </div>
+      </section>
+    </div>
+  </div>
 
-  <footer class="footer">
-    <span>MIT Licensed</span>
-    <span>Static demo for GitHub Pages</span>
-  </footer>
-
-  <script src="./app.js"></script>
+  <div id="toast" class="toast hidden"></div>
+  <script src="./demo.js"></script>
 </body>
 </html>
