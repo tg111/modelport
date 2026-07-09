@@ -64,7 +64,15 @@ function staticFile(req, res, url) {
   const fullPath = path.resolve(PUBLIC_DIR, file);
   if (!fullPath.startsWith(PUBLIC_DIR) || !fs.existsSync(fullPath)) return sendError(res, 404, "Not found");
   const ext = path.extname(fullPath);
-  const type = ext === ".html" ? htmlType : ext === ".css" ? { "content-type": "text/css; charset=utf-8" } : ext === ".js" ? { "content-type": "application/javascript; charset=utf-8" } : textType;
+  const type = ext === ".html"
+    ? htmlType
+    : ext === ".css"
+      ? { "content-type": "text/css; charset=utf-8" }
+      : ext === ".js"
+        ? { "content-type": "application/javascript; charset=utf-8" }
+        : ext === ".svg"
+          ? { "content-type": "image/svg+xml; charset=utf-8" }
+          : textType;
   res.writeHead(200, type);
   fs.createReadStream(fullPath)
     .on("error", error => {

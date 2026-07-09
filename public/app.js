@@ -32,6 +32,61 @@ let usagePage = 1;
 let usagePageSize = Number(usagePageSizeEl?.value || 20);
 let usageTotalPages = 1;
 
+function bindProtocolAutoHint(formEl) {
+  const select = formEl.querySelector("select[name='protocol']");
+  const hint = formEl.querySelector("[data-protocol-auto-hint]");
+  if (!select || !hint) return;
+  if (select.dataset.autoHintBound === "true") {
+    const auto = select.value === "auto";
+    hint.classList.toggle("hidden", !auto);
+    hint.classList.toggle("warning", auto);
+    return;
+  }
+  const sync = () => {
+    const auto = select.value === "auto";
+    hint.classList.toggle("hidden", !auto);
+    hint.classList.toggle("warning", auto);
+  };
+  select.addEventListener("change", sync);
+  select.dataset.autoHintBound = "true";
+  sync();
+}
+
+function refreshChannelsSoon(times = 3) {
+  if (times <= 0) return;
+  setTimeout(async () => {
+    await loadChannels();
+    refreshChannelsSoon(times - 1);
+  }, 1600);
+}
+
+function setSecretVisible(input, button, visible) {
+  input.type = visible ? "text" : "password";
+  button.dataset.secretVisible = visible ? "true" : "false";
+  button.setAttribute("aria-label", visible ? "隐藏密钥" : "显示密钥");
+  button.setAttribute("title", visible ? "隐藏密钥" : "显示密钥");
+  const icon = button.querySelector("img");
+  if (icon) icon.src = visible ? "/assets/icons/eye-off.svg" : "/assets/icons/eye.svg";
+}
+
+async function copyText(value) {
+  if (!value) return false;
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return true;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const ok = document.execCommand("copy");
+  textarea.remove();
+  return ok;
+}
+
 // ─── Toast ─────────────────────────────────────────────
 
 function showToast(message, type = "info") {
@@ -115,7 +170,9 @@ document.querySelector("#channelForm").addEventListener("submit", async event =>
     const channel = await request("/api/channels", { method: "POST", body: JSON.stringify(payload) });
     closeAddModal();
     await loadChannels();
-    showToast("渠道已保存，正在自动获取模型...", "success");
+    const detecting = channel.protocolDetection?.status === "detecting";
+    if (detecting) refreshChannelsSoon();
+    showToast(detecting ? "渠道已保存，协议正在后台识别，正在自动获取模型..." : "渠道已保存，正在自动获取模型...", "success");
     try {
       const result = await request(`/api/channels/${channel.id}/fetch-models`, { method: "POST" });
       if (result.ok === false) throw new Error(testFailureText(result));
@@ -149,9 +206,11 @@ editForm.addEventListener("submit", async event => {
   if (!payload.apiKey) delete payload.apiKey;
   submitBtn.disabled = true;
   try {
-    await request(`/api/channels/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+    const channel = await request(`/api/channels/${id}`, { method: "PUT", body: JSON.stringify(payload) });
     closeEditModal();
-    showToast("渠道已更新", "success");
+    const detecting = channel.protocolDetection?.status === "detecting";
+    if (detecting) refreshChannelsSoon();
+    showToast(detecting ? "渠道已更新，协议正在后台识别" : "渠道已更新", "success");
     await loadChannels();
   } catch (error) {
     showToast(error.message, "error");
@@ -164,6 +223,28 @@ document.addEventListener("keydown", event => {
   if (event.key === "Escape") {
     if (!editModal.classList.contains("hidden")) closeEditModal();
     if (!addModal.classList.contains("hidden")) closeAddModal();
+  }
+});
+
+document.addEventListener("click", async event => {
+  const toggle = event.target.closest("[data-secret-toggle]");
+  if (toggle) {
+    const input = toggle.closest(".secret-input-wrap")?.querySelector("input");
+    if (!input) return;
+    setSecretVisible(input, toggle, input.type === "password");
+    return;
+  }
+
+  const copy = event.target.closest("[data-secret-copy]");
+  if (copy) {
+    const input = copy.closest(".secret-input-wrap")?.querySelector("input");
+    if (!input) return;
+    try {
+      const ok = await copyText(input.value);
+      showToast(ok ? "密钥已复制" : "没有可复制的密钥", ok ? "success" : "error");
+    } catch (error) {
+      showToast(`复制失败：${error.message}`, "error");
+    }
   }
 });
 
@@ -421,7 +502,15 @@ function renderChannels() {
     const totalCount = Number(stats.totalCount || 0);
     const successRate = totalCount ? Math.round((successCount / totalCount) * 1000) / 10 : null;
     const recentBar = statusBarHtml(stats.buckets || []);
-    const protocolLabel = channel.protocol === "chat" ? "Chat Completions" : "Responses";
+    const protocolLabel = channel.protocol === "chat"
+      ? "Chat Completions"
+      : channel.protocol === "auto" ? "自动识别" : "Responses";
+    const detection = channel.protocolDetection || {};
+    const detectionBadge = detection.status === "detecting"
+      ? `<span class="badge protocol-badge">识别中</span>`
+      : detection.status === "failed"
+        ? `<span class="badge protocol-badge">识别失败</span>`
+        : "";
     const healthClass = !totalCount ? "idle" : failedCount ? (successCount ? "warn" : "bad") : "good";
     const healthText = !totalCount ? "无请求" : failedCount ? (successCount ? "部分失败" : "全部失败") : "运行正常";
 
@@ -433,6 +522,7 @@ function renderChannels() {
               <span class="status-led ${isEnabled ? "on" : "off"}"></span>
               <span class="card-name">${escapeHtml(channel.note || channel.apiBase)}</span>
               <span class="badge protocol-badge">${protocolLabel}</span>
+              ${detectionBadge}
             </div>
             <div class="provider-meta">
               <span class="provider-url">${escapeHtml(channel.apiBase)}</span>
@@ -691,7 +781,8 @@ async function openEditModal(id) {
   editForm.elements.apiKey.value = channel.apiKey || "";
   editForm.elements.note.value = channel.note || "";
   editForm.elements.providerLink.value = channel.providerLink || "";
-  editForm.elements.protocol.value = channel.protocol || "responses";
+  editForm.elements.protocol.value = channel.protocol || "auto";
+  bindProtocolAutoHint(editForm);
   editModal.classList.remove("hidden");
   editForm.elements.apiBase.focus();
 }
@@ -741,3 +832,6 @@ if (apiKey) {
 } else {
   setLoggedIn(false);
 }
+
+bindProtocolAutoHint(document.querySelector("#channelForm"));
+bindProtocolAutoHint(editForm);

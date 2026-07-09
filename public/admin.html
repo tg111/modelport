@@ -139,7 +139,17 @@
         </label>
         <label class="field">
           <span>密钥</span>
-          <input name="apiKey" type="password">
+          <div class="secret-input-wrap">
+            <input name="apiKey" type="password" autocomplete="off">
+            <div class="secret-actions">
+              <button type="button" class="secret-icon-btn" data-secret-toggle aria-label="显示密钥" title="显示密钥">
+                <img src="/assets/icons/eye.svg" alt="" aria-hidden="true">
+              </button>
+              <button type="button" class="secret-icon-btn" data-secret-copy aria-label="复制密钥" title="复制密钥">
+                <img src="/assets/icons/copy.svg" alt="" aria-hidden="true">
+              </button>
+            </div>
+          </div>
         </label>
         <label class="field">
           <span>备注</span>
@@ -152,9 +162,11 @@
         <label class="field">
           <span>渠道协议</span>
           <select name="protocol">
+            <option value="auto" selected>自动识别</option>
             <option value="responses">Responses 原生</option>
             <option value="chat">Chat Completions 兼容</option>
           </select>
+          <p class="field-hint" data-protocol-auto-hint>自动识别会向上游发送一次最小化协议探测请求。明确禁止测试请求的渠道请手动选择协议。</p>
         </label>
         <div class="form-actions">
           <button type="button" class="btn ghost" id="addCancelBtn">取消</button>
@@ -178,7 +190,17 @@
         </label>
         <label class="field">
           <span>密钥</span>
-          <input name="apiKey" type="text" autocomplete="off">
+          <div class="secret-input-wrap">
+            <input name="apiKey" type="password" autocomplete="off">
+            <div class="secret-actions">
+              <button type="button" class="secret-icon-btn" data-secret-toggle aria-label="显示密钥" title="显示密钥">
+                <img src="/assets/icons/eye.svg" alt="" aria-hidden="true">
+              </button>
+              <button type="button" class="secret-icon-btn" data-secret-copy aria-label="复制密钥" title="复制密钥">
+                <img src="/assets/icons/copy.svg" alt="" aria-hidden="true">
+              </button>
+            </div>
+          </div>
         </label>
         <label class="field">
           <span>备注</span>
@@ -191,9 +213,11 @@
         <label class="field">
           <span>渠道协议</span>
           <select name="protocol">
+            <option value="auto">自动识别</option>
             <option value="responses">Responses 原生</option>
             <option value="chat">Chat Completions 兼容</option>
           </select>
+          <p class="field-hint" data-protocol-auto-hint>自动识别会向上游发送一次最小化协议探测请求。明确禁止测试请求的渠道请手动选择协议。</p>
         </label>
         <div class="form-actions">
           <button type="button" class="btn ghost" id="editCancelBtn">取消</button>

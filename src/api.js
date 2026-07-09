@@ -1,13 +1,29 @@
 const { state, saveDb, usageRecord } = require("./state");
 const { readBody, requireAuth, sendError, sendJson } = require("./http");
 const {
+  detectAndUpdateProtocol,
   fetchModels,
+  markProtocolDetecting,
   mergeModels,
   publicChannel,
   sanitizeChannel,
   sanitizeModels
 } = require("./channels");
 const { responseOutputText, testChannel } = require("./providers");
+
+function queueProtocolDetection(channel) {
+  if (channel.protocol !== "auto") return;
+  markProtocolDetecting(channel);
+  setImmediate(async () => {
+    await detectAndUpdateProtocol(channel);
+    saveDb();
+  });
+}
+
+function clearProtocolDetectionWhenManual(channel) {
+  if (channel.protocol === "auto") return;
+  delete channel.protocolDetection;
+}
 
 async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/login") {
@@ -23,6 +39,8 @@ async function api(req, res, url) {
     const body = await readBody(req);
     if (!body.apiBase) return sendError(res, 400, "apiBase is required");
     const channel = sanitizeChannel(body);
+    queueProtocolDetection(channel);
+    clearProtocolDetectionWhenManual(channel);
     state.db.channels.unshift(channel);
     saveDb();
     return sendJson(res, 201, publicChannel(channel));
@@ -37,7 +55,10 @@ async function api(req, res, url) {
     }
     if (req.method === "PUT" && !action) {
       const body = await readBody(req);
-      Object.assign(channel, sanitizeChannel(body, channel));
+      const nextChannel = sanitizeChannel(body, channel);
+      Object.assign(channel, nextChannel);
+      queueProtocolDetection(channel);
+      clearProtocolDetectionWhenManual(channel);
       saveDb();
       return sendJson(res, 200, publicChannel(channel));
     }

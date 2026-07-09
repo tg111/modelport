@@ -39,6 +39,7 @@ function publicChannel(channel, options = {}) {
     stream: channel.stream !== false,
     ...(options.includeKey ? { apiKey } : {}),
     hasKey: Boolean(apiKey),
+    protocolDetection: channel.protocolDetection || null,
     usageCount: successCount,
     usageStats: {
       successCount,
@@ -55,12 +56,18 @@ function publicChannel(channel, options = {}) {
   };
 }
 
+function protocolLabel(protocol) {
+  if (protocol === "chat") return "Chat Completions";
+  if (protocol === "responses") return "Responses";
+  return "Auto";
+}
+
 function sanitizeChannel(input, previous = {}) {
   const apiBase = normalizeBase(input.apiBase);
   const apiKey = typeof input.apiKey === "string" && input.apiKey ? input.apiKey : previous.apiKey;
-  const protocol = ["responses", "chat"].includes(input.protocol)
+  const protocol = ["responses", "chat", "auto"].includes(input.protocol)
     ? input.protocol
-    : previous.protocol || "responses";
+    : previous.protocol || "auto";
   return {
     id: previous.id || crypto.randomUUID(),
     apiBase,
@@ -73,6 +80,115 @@ function sanitizeChannel(input, previous = {}) {
     createdAt: previous.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
+}
+
+function protocolProbeBody(protocol) {
+  if (protocol === "chat") {
+    return {
+      model: "modelport-protocol-detect",
+      messages: [{ role: "user", content: "ping" }],
+      max_tokens: 1
+    };
+  }
+  return {
+    model: "modelport-protocol-detect",
+    input: "ping",
+    max_output_tokens: 1
+  };
+}
+
+function endpointUnsupported(status, body) {
+  if ([404, 405, 410, 501].includes(status)) return true;
+  const text = String(body?.error?.message || body?.message || body || "").toLowerCase();
+  return [
+    "no route",
+    "cannot post",
+    "unknown endpoint",
+    "unknown path",
+    "unsupported endpoint",
+    "unsupported path",
+    "invalid endpoint",
+    "url not found"
+  ].some(fragment => text.includes(fragment));
+}
+
+async function probeProtocol(channel, protocol) {
+  const suffix = protocol === "chat" ? "/chat/completions" : "/responses";
+  const upstreamUrl = openaiUrl(channel.apiBase, suffix);
+  try {
+    const res = await fetch(upstreamUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${channel.apiKey}` },
+      body: JSON.stringify(protocolProbeBody(protocol)),
+      signal: AbortSignal.timeout(10000)
+    });
+    const type = res.headers.get("content-type") || "";
+    const body = type.toLowerCase().includes("application/json")
+      ? await res.json().catch(() => ({}))
+      : await res.text().catch(() => "");
+    return {
+      protocol,
+      status: res.status,
+      supported: res.ok || !endpointUnsupported(res.status, body),
+      body: preview(body)
+    };
+  } catch (error) {
+    return {
+      protocol,
+      status: null,
+      supported: false,
+      body: error.message
+    };
+  }
+}
+
+async function detectProtocol(channel) {
+  const responses = await probeProtocol(channel, "responses");
+  if (responses.supported) return "responses";
+
+  const chat = await probeProtocol(channel, "chat");
+  if (chat.supported) return "chat";
+
+  throw upstreamError("Unable to detect channel protocol", {
+    upstreamStatus: chat.status || responses.status || null,
+    upstreamBody: `responses: HTTP ${responses.status} ${responses.body}; chat: HTTP ${chat.status} ${chat.body}`
+  });
+}
+
+function markProtocolDetecting(channel) {
+  channel.protocolDetection = {
+    status: "detecting",
+    startedAt: new Date().toISOString(),
+    completedAt: null,
+    error: null
+  };
+  channel.updatedAt = new Date().toISOString();
+}
+
+async function detectAndUpdateProtocol(channel) {
+  markProtocolDetecting(channel);
+  try {
+    const protocol = await detectProtocol(channel);
+    channel.protocol = protocol;
+    channel.protocolDetection = {
+      status: "success",
+      startedAt: channel.protocolDetection?.startedAt || null,
+      completedAt: new Date().toISOString(),
+      error: null,
+      protocol,
+      label: protocolLabel(protocol)
+    };
+  } catch (error) {
+    channel.protocolDetection = {
+      status: "failed",
+      startedAt: channel.protocolDetection?.startedAt || null,
+      completedAt: new Date().toISOString(),
+      error: error.message,
+      upstreamStatus: error.upstreamStatus || null,
+      upstreamBody: error.upstreamBody || null
+    };
+  }
+  channel.updatedAt = new Date().toISOString();
 }
 
 async function fetchModels(channel) {
@@ -163,6 +279,9 @@ module.exports = {
   openaiUrl,
   publicChannel,
   sanitizeChannel,
+  detectProtocol,
+  detectAndUpdateProtocol,
+  markProtocolDetecting,
   fetchModels,
   sanitizeModels,
   mergeModels,
