@@ -33,6 +33,21 @@ function usageErrorDetail(error, fallback = {}) {
   };
 }
 
+function clientIp(req) {
+  const forwarded = String(req.headers?.forwarded || "");
+  const forwardedFor = forwarded.match(/(?:^|[,;])\s*for=(?:"?\[([^\]]+)\](?::\d+)?"?|"?([^;,\s"]+)"?)/i);
+  const raw = forwardedFor?.[1]
+    || forwardedFor?.[2]
+    || String(req.headers?.["x-forwarded-for"] || "").split(",")[0].trim()
+    || String(req.headers?.["x-real-ip"] || "").trim()
+    || req.socket?.remoteAddress
+    || "";
+  const normalized = raw.replace(/^::ffff:/, "").replace(/^"|"$/g, "");
+  return /^\d{1,3}(?:\.\d{1,3}){3}:\d+$/.test(normalized)
+    ? normalized.slice(0, normalized.lastIndexOf(":"))
+    : normalized;
+}
+
 function responseOutputText(body) {
   if (typeof body?.output_text === "string") return body.output_text;
   const output = Array.isArray(body?.output) ? body.output : [];
@@ -93,6 +108,7 @@ module.exports = {
   preview,
   upstreamError,
   usageErrorDetail,
+  clientIp,
   responseOutputText,
   contentType,
   isJsonRequest,

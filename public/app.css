@@ -204,7 +204,36 @@ a:hover {
 
 .header-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
+}
+
+.input-sm {
+  width: auto;
+  max-width: 180px;
+  height: 34px;
+  padding: 0 30px 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.input-sm:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(15, 118, 110, 0.1);
+}
+
+#usageModelFilter,
+#usageChannelFilter {
+  width: 160px;
+}
+
+#usageStatusFilter {
+  width: 110px;
 }
 
 .channel-filter-bar {
@@ -445,6 +474,16 @@ a:hover {
   height: 28px;
   padding: 0 10px;
   font-size: 12.5px;
+}
+
+.btn-icon {
+  width: 15px;
+  height: 15px;
+  margin-right: 6px;
+}
+
+.btn.primary .btn-icon {
+  filter: brightness(0) invert(1);
 }
 
 .btn:disabled {
@@ -1243,10 +1282,66 @@ tbody tr:hover td {
 
 .error-cell {
   max-width: 320px;
+  position: relative;
+}
+
+.error-preview {
+  display: block;
+  max-width: 320px;
+  padding: 0;
+  border: 0;
+  background: transparent;
   color: var(--danger);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.error-preview:focus-visible {
+  outline: 2px solid rgba(220, 38, 38, 0.25);
+  outline-offset: 3px;
+}
+
+.error-tooltip {
+  position: fixed;
+  z-index: 90;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 24px));
+  max-height: 260px;
+  padding: 9px 11px;
+  overflow: auto;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff;
+  color: #7f1d1d;
+  box-shadow: var(--shadow-lg);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  pointer-events: none;
+}
+
+.error-modal-card {
+  width: min(760px, 100%);
+}
+
+.error-detail-text {
+  min-height: 180px;
+  max-height: min(60vh, 560px);
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #7f1d1d;
+  font: 12.5px/1.6 "SF Mono", "Fira Code", "Cascadia Code", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .pagination-bar {

@@ -151,7 +151,7 @@ Authorization: Bearer <.env 里的 PROXY_API_KEY>
 * `POST /api/channels/:id/test`
 * `PUT /api/channels/:id/models`
 * `DELETE /api/channels/:id`
-* `GET /api/usage`
+* `GET /api/usage`（支持 `status`、`model`、`channelId`、`page`、`pageSize` 查询参数）
 * `GET /v1/models`
 * `POST /v1/responses`
 * `POST /v1/chat/completions`

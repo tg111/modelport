@@ -7,6 +7,7 @@ const {
   extractMultipartBoundary,
   extractMultipartModel,
   replaceMultipartModel,
+  clientIp,
   usageErrorDetail
 } = require("./utils");
 
@@ -30,6 +31,7 @@ async function proxyImageGenerations(req, res, body) {
 
 async function proxyJsonEndpoint(req, res, body, endpoint) {
   const alias = body.model;
+  const ip = clientIp(req);
   if (!alias) return sendError(res, 400, "Missing model");
   const candidates = sortedCandidates(alias);
   if (!candidates.length) return sendError(res, 404, `No enabled channel found for proxy model: ${alias}`);
@@ -51,15 +53,15 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
             res.write(chunk);
           }
           res.end();
-          usageRecord({ success: true, endpoint: req.url, bytes, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note });
+          usageRecord({ success: true, endpoint: req.url, bytes, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
         } catch (error) {
-          usageRecord({ success: false, endpoint: req.url, bytes, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message });
+          usageRecord({ success: false, endpoint: req.url, bytes, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
           if (!res.destroyed && !res.writableEnded) res.end();
         }
         return;
       }
 
-      usageRecord({ success: true, endpoint: req.url, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note });
+      usageRecord({ success: true, endpoint: req.url, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return sendJson(res, upstream.status, upstream.body);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -67,7 +69,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
         channelNote: channel.note
       });
       errors.push(detail);
-      usageRecord({ success: false, endpoint: req.url, model: alias, sourceModel: model.id, ...detail, error: error.message });
+      usageRecord({ success: false, endpoint: req.url, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }
 
@@ -82,6 +84,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
 async function proxyImageEdits(req, res, rawBody) {
   const boundary = extractMultipartBoundary(req.headers["content-type"]);
   const alias = extractMultipartModel(rawBody, boundary);
+  const ip = clientIp(req);
   if (!alias) return sendError(res, 400, "Missing model");
   const candidates = sortedCandidates(alias);
   if (!candidates.length) return sendError(res, 404, `No enabled channel found for proxy model: ${alias}`);
@@ -91,7 +94,7 @@ async function proxyImageEdits(req, res, rawBody) {
     try {
       const upstreamBody = replaceMultipartModel(rawBody, boundary, model.id);
       const upstream = await callImageEdits(channel, upstreamBody, req);
-      usageRecord({ success: true, endpoint: req.url, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note });
+      usageRecord({ success: true, endpoint: req.url, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return send(res, upstream.status, upstream.body, upstream.headers);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -99,7 +102,7 @@ async function proxyImageEdits(req, res, rawBody) {
         channelNote: channel.note
       });
       errors.push(detail);
-      usageRecord({ success: false, endpoint: req.url, model: alias, sourceModel: model.id, ...detail, error: error.message });
+      usageRecord({ success: false, endpoint: req.url, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }
 

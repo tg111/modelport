@@ -6,6 +6,8 @@ const toast = document.querySelector("#toast");
 const channelsEl = document.querySelector("#channels");
 const usageRows = document.querySelector("#usageRows");
 const usageStatusFilter = document.querySelector("#usageStatusFilter");
+const usageModelFilter = document.querySelector("#usageModelFilter");
+const usageChannelFilter = document.querySelector("#usageChannelFilter");
 const usagePageSummary = document.querySelector("#usagePageSummary");
 const usagePageSizeEl = document.querySelector("#usagePageSize");
 const usagePrevPageBtn = document.querySelector("#usagePrevPage");
@@ -22,6 +24,9 @@ const clearChannelFiltersBtn = document.querySelector("#clearChannelFilters");
 const addModal = document.querySelector("#addModal");
 const editModal = document.querySelector("#editModal");
 const editForm = document.querySelector("#editForm");
+const errorModal = document.querySelector("#errorModal");
+const errorDetailText = document.querySelector("#errorDetailText");
+const errorTooltip = document.querySelector("#errorTooltip");
 
 let apiKey = localStorage.getItem(tokenKey) || "";
 let channels = [];
@@ -31,6 +36,7 @@ let selectedProxyModels = new Set();
 let usagePage = 1;
 let usagePageSize = Number(usagePageSizeEl?.value || 20);
 let usageTotalPages = 1;
+let errorModalTrigger = null;
 
 function bindProtocolAutoHint(formEl) {
   const select = formEl.querySelector("select[name='protocol']");
@@ -196,6 +202,60 @@ editModal.addEventListener("click", event => {
   if (event.target === editModal) closeEditModal();
 });
 
+function closeErrorModal() {
+  errorModal.classList.add("hidden");
+  errorDetailText.textContent = "";
+  errorModalTrigger?.focus();
+  errorModalTrigger = null;
+}
+
+document.querySelector("#errorCloseBtn").addEventListener("click", closeErrorModal);
+errorModal.addEventListener("click", event => {
+  if (event.target === errorModal) closeErrorModal();
+});
+document.querySelector("#errorCopyBtn").addEventListener("click", async () => {
+  try {
+    await copyText(errorDetailText.textContent);
+    showToast("错误详情已复制", "success");
+  } catch (error) {
+    showToast(`复制失败：${error.message}`, "error");
+  }
+});
+
+function showErrorTooltip(preview) {
+  errorTooltip.textContent = preview.dataset.errorDetail || "";
+  errorTooltip.classList.remove("hidden");
+  const anchor = preview.getBoundingClientRect();
+  const tooltip = errorTooltip.getBoundingClientRect();
+  const padding = 12;
+  const left = Math.min(Math.max(anchor.left, padding), window.innerWidth - tooltip.width - padding);
+  const above = anchor.top - tooltip.height - 8;
+  const top = above >= padding ? above : Math.min(anchor.bottom + 8, window.innerHeight - tooltip.height - padding);
+  errorTooltip.style.left = `${Math.max(padding, left)}px`;
+  errorTooltip.style.top = `${Math.max(padding, top)}px`;
+}
+
+function hideErrorTooltip() {
+  errorTooltip.classList.add("hidden");
+  errorTooltip.textContent = "";
+}
+
+usageRows.addEventListener("pointerover", event => {
+  const preview = event.target.closest("[data-error-detail]");
+  if (preview) showErrorTooltip(preview);
+});
+usageRows.addEventListener("pointerout", event => {
+  const preview = event.target.closest("[data-error-detail]");
+  if (preview && !preview.contains(event.relatedTarget)) hideErrorTooltip();
+});
+usageRows.addEventListener("focusin", event => {
+  const preview = event.target.closest("[data-error-detail]");
+  if (preview) showErrorTooltip(preview);
+});
+usageRows.addEventListener("focusout", hideErrorTooltip);
+document.querySelector(".table-wrap").addEventListener("scroll", hideErrorTooltip);
+window.addEventListener("resize", hideErrorTooltip);
+
 editForm.addEventListener("submit", async event => {
   event.preventDefault();
   const formEl = event.currentTarget;
@@ -223,10 +283,20 @@ document.addEventListener("keydown", event => {
   if (event.key === "Escape") {
     if (!editModal.classList.contains("hidden")) closeEditModal();
     if (!addModal.classList.contains("hidden")) closeAddModal();
+    if (!errorModal.classList.contains("hidden")) closeErrorModal();
   }
 });
 
 document.addEventListener("click", async event => {
+  const errorPreview = event.target.closest("[data-error-detail]");
+  if (errorPreview) {
+    hideErrorTooltip();
+    errorModalTrigger = errorPreview;
+    errorDetailText.textContent = errorPreview.dataset.errorDetail;
+    errorModal.classList.remove("hidden");
+    document.querySelector("#errorCopyBtn").focus();
+    return;
+  }
   const toggle = event.target.closest("[data-secret-toggle]");
   if (toggle) {
     const input = toggle.closest(".secret-input-wrap")?.querySelector("input");
@@ -257,6 +327,10 @@ usageStatusFilter.addEventListener("change", () => {
   usagePage = 1;
   loadUsage();
 });
+[usageModelFilter, usageChannelFilter].forEach(filter => filter.addEventListener("change", () => {
+  usagePage = 1;
+  loadUsage();
+}));
 usagePageSizeEl.addEventListener("change", () => {
   usagePageSize = Number(usagePageSizeEl.value || 20);
   usagePage = 1;
@@ -341,12 +415,15 @@ async function loadUsage() {
       pageSize: String(usagePageSize)
     });
     if (status !== "all") params.set("status", status);
+    if (usageModelFilter.value) params.set("model", usageModelFilter.value);
+    if (usageChannelFilter.value) params.set("channelId", usageChannelFilter.value);
     const result = await request(`/api/usage?${params}`);
     const rows = Array.isArray(result) ? result : result.items || [];
     const total = Array.isArray(result) ? rows.length : Number(result.total || 0);
     usagePage = Array.isArray(result) ? 1 : Number(result.page || 1);
     usagePageSize = Array.isArray(result) ? usagePageSize : Number(result.pageSize || usagePageSize);
     usageTotalPages = Math.max(1, Math.ceil(total / usagePageSize));
+    renderUsageFilters(result.filters);
     usageRows.innerHTML = rows.length
       ? rows.map(row => `
           <tr>
@@ -355,11 +432,12 @@ async function loadUsage() {
             <td>${escapeHtml(row.model || "")}</td>
             <td>${escapeHtml(row.sourceModel || "")}</td>
             <td>${escapeHtml(row.channelNote || row.channelId || "")}</td>
-            <td class="error-cell">${failureDetail(row)}</td>
+            <td>${escapeHtml(row.ip || "-")}</td>
+            <td class="error-cell">${failureDetailHtml(row)}</td>
             <td><button type="button" class="btn danger sm" data-usage-delete="${escapeAttr(row.id)}">删除</button></td>
           </tr>
         `).join("")
-      : `<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:32px">暂无匹配的使用记录</td></tr>`;
+      : `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:32px">暂无匹配的使用记录</td></tr>`;
 
     usageRows.querySelectorAll("[data-usage-delete]").forEach(button => {
       button.addEventListener("click", () => deleteUsage(button.dataset.usageDelete));
@@ -368,6 +446,20 @@ async function loadUsage() {
   } catch (error) {
     showToast(error.message, "error");
   }
+}
+
+function renderUsageFilters(filters = {}) {
+  replaceSelectOptions(usageModelFilter, filters.models || [], "全部模型", value => ({ value, label: value }));
+  replaceSelectOptions(usageChannelFilter, filters.channels || [], "全部渠道", channel => ({ value: channel.id, label: channel.name }));
+}
+
+function replaceSelectOptions(select, items, emptyLabel, optionFor) {
+  const selected = select.value;
+  select.innerHTML = `<option value="">${emptyLabel}</option>` + items.map(item => {
+    const option = optionFor(item);
+    return `<option value="${escapeAttr(option.value)}">${escapeHtml(option.label)}</option>`;
+  }).join("");
+  if ([...select.options].some(option => option.value === selected)) select.value = selected;
 }
 
 function renderUsagePagination(total) {
@@ -811,10 +903,17 @@ function formPayload(formEl) {
 function failureDetail(row) {
   if (row.success) return "";
   const parts = [];
-  if (row.error) parts.push(row.error);
+  if (row.error || row.message) parts.push(row.error || row.message);
   if (row.upstreamStatus) parts.push(`HTTP ${row.upstreamStatus}`);
-  if (row.upstreamBody) parts.push(row.upstreamBody);
-  return escapeHtml(parts.join("\n"));
+  if (row.upstreamUrl) parts.push(`请求地址：${row.upstreamUrl}`);
+  if (row.upstreamBody) parts.push(typeof row.upstreamBody === "string" ? row.upstreamBody : JSON.stringify(row.upstreamBody, null, 2));
+  return parts.join("\n");
+}
+
+function failureDetailHtml(row) {
+  const detail = failureDetail(row);
+  if (!detail) return "";
+  return `<button type="button" class="error-preview" data-error-detail="${escapeAttr(detail)}">${escapeHtml(detail)}</button>`;
 }
 
 function testFailureText(result) {

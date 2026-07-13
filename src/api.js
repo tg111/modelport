@@ -10,6 +10,7 @@ const {
   sanitizeModels
 } = require("./channels");
 const { responseOutputText, testChannel } = require("./providers");
+const { clientIp } = require("./utils");
 
 function queueProtocolDetection(channel) {
   if (channel.protocol !== "auto") return;
@@ -94,6 +95,7 @@ async function api(req, res, url) {
           sourceModel: result.model.id,
           channelId: channel.id,
           channelNote: channel.note,
+          ip: clientIp(req),
           request: testMessage
         });
         return sendJson(res, 200, {
@@ -113,6 +115,7 @@ async function api(req, res, url) {
           sourceModel: model.id || "",
           channelId: channel.id,
           channelNote: channel.note,
+          ip: clientIp(req),
           request: testMessage,
           error: error.message,
           upstreamStatus: error.upstreamStatus || null,
@@ -147,11 +150,23 @@ async function api(req, res, url) {
     const rawPageSize = Number(url.searchParams.get("pageSize") || url.searchParams.get("limit") || 20);
     const pageSize = Math.min(Math.max(Number.isFinite(rawPageSize) ? Math.floor(rawPageSize) : 20, 1), 100);
     const status = url.searchParams.get("status") || "all";
+    const model = url.searchParams.get("model") || "";
+    const channelId = url.searchParams.get("channelId") || "";
     const rows = state.db.usage.filter(record => {
-      if (status === "success") return record.success === true;
-      if (status === "failed") return record.success === false;
+      if (status === "success" && record.success !== true) return false;
+      if (status === "failed" && record.success !== false) return false;
+      if (model && record.model !== model) return false;
+      if (channelId && record.channelId !== channelId) return false;
       return true;
     });
+    const models = [...new Set(state.db.usage.map(record => record.model).filter(Boolean))].sort();
+    const channelOptions = new Map();
+    for (const channel of state.db.channels) channelOptions.set(channel.id, channel.note || channel.apiBase || channel.id);
+    for (const record of state.db.usage) {
+      if (record.channelId && !channelOptions.has(record.channelId)) {
+        channelOptions.set(record.channelId, record.channelNote || record.channelId);
+      }
+    }
     const total = rows.length;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const page = Math.min(Math.max(Number.isFinite(rawPage) ? Math.floor(rawPage) : 1, 1), totalPages);
@@ -161,7 +176,11 @@ async function api(req, res, url) {
       total,
       page,
       pageSize,
-      totalPages
+      totalPages,
+      filters: {
+        models,
+        channels: [...channelOptions].map(([id, name]) => ({ id, name }))
+      }
     });
   }
   if (req.method === "DELETE" && url.pathname === "/api/usage") {
