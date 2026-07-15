@@ -33,6 +33,19 @@ async function api(req, res, url) {
   }
   if (!requireAuth(req, res)) return;
 
+  if (req.method === "GET" && url.pathname === "/api/preferences") {
+    return sendJson(res, 200, state.db.preferences);
+  }
+  if (req.method === "PUT" && url.pathname === "/api/preferences") {
+    const body = await readBody(req);
+    if (!["all", "enabled"].includes(body.channelVisibility)) {
+      return sendError(res, 400, "channelVisibility must be all or enabled");
+    }
+    state.db.preferences.channelVisibility = body.channelVisibility;
+    saveDb();
+    return sendJson(res, 200, state.db.preferences);
+  }
+
   if (req.method === "GET" && url.pathname === "/api/channels") {
     return sendJson(res, 200, state.db.channels.map(publicChannel));
   }

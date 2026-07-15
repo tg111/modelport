@@ -7,6 +7,7 @@ const usagePrevPageBtn = document.querySelector("#usagePrevPage");
 const usageNextPageBtn = document.querySelector("#usageNextPage");
 const channelSearchEl = document.querySelector("#channelSearch");
 const channelSortEl = document.querySelector("#channelSort");
+const channelVisibilityControl = document.querySelector(".channel-visibility-control");
 const proxyModelDropdown = document.querySelector("#proxyModelDropdown");
 const proxyModelFilterBtn = document.querySelector("#proxyModelFilterBtn");
 const proxyModelFilterText = document.querySelector("#proxyModelFilterText");
@@ -18,6 +19,7 @@ const toast = document.querySelector("#toast");
 
 let channelSearch = "";
 let channelSort = "created_desc";
+let channelVisibility = "all";
 let selectedProxyModels = new Set();
 let usagePage = 1;
 let usagePageSize = Number(usagePageSizeEl.value || 20);
@@ -69,7 +71,7 @@ const channels = [
     note: "Chat Completions 兼容渠道",
     providerLink: "",
     protocol: "chat",
-    enabled: true,
+    enabled: false,
     createdAt: "2026-07-08T12:05:00Z",
     usageStats: {
       successCount: 12,
@@ -201,6 +203,8 @@ function sortChannels(items) {
 }
 
 function channelMatchesFilters(channel) {
+  if (channelVisibility === "enabled" && channel.enabled === false) return false;
+
   if (channelSearch) {
     const haystack = [channel.note, channel.apiBase, ...enabledProxyModels(channel)].join(" ").toLowerCase();
     if (!haystack.includes(channelSearch)) return false;
@@ -237,7 +241,7 @@ function channelHtml(channel) {
           </div>
           <div class="provider-meta">
             <span class="provider-url">${escapeHtml(channel.apiBase)}</span>
-            ${channel.providerLink ? `<a href="${escapeAttr(channel.providerLink)}" target="_blank" rel="noreferrer">服务商</a>` : ""}
+            ${channel.providerLink ? `<a href="${escapeAttr(channel.providerLink)}" target="_blank" rel="noreferrer">渠道官网</a>` : ""}
           </div>
           <div class="model-chips">
             ${enabledModels.map(model => `<span class="model-chip">${escapeHtml(model.alias || model.id)}</span>`).join("")}
@@ -344,6 +348,14 @@ function bindEvents() {
     channelSort = event.currentTarget.value;
     renderChannels();
   });
+  channelVisibilityControl.addEventListener("click", event => {
+    const button = event.target.closest("[data-channel-visibility]");
+    if (!button) return;
+    channelVisibility = button.dataset.channelVisibility;
+    renderChannelVisibilityControl();
+    renderChannels();
+    showToast("本地部署后，此展示偏好会保存到后端", "info");
+  });
   proxyModelFilterBtn.addEventListener("click", () => {
     proxyModelFilterPanel.classList.toggle("hidden");
     proxyModelFilterBtn.classList.toggle("open", !proxyModelFilterPanel.classList.contains("hidden"));
@@ -420,7 +432,16 @@ function bindEvents() {
   });
 }
 
+function renderChannelVisibilityControl() {
+  channelVisibilityControl.querySelectorAll("[data-channel-visibility]").forEach(button => {
+    const active = button.dataset.channelVisibility === channelVisibility;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
 bindEvents();
+renderChannelVisibilityControl();
 renderChannelFilters();
 renderChannels();
 renderUsage();

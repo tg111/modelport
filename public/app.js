@@ -14,6 +14,7 @@ const usagePrevPageBtn = document.querySelector("#usagePrevPage");
 const usageNextPageBtn = document.querySelector("#usageNextPage");
 const channelSearchEl = document.querySelector("#channelSearch");
 const channelSortEl = document.querySelector("#channelSort");
+const channelVisibilityControl = document.querySelector(".channel-visibility-control");
 const proxyModelDropdown = document.querySelector("#proxyModelDropdown");
 const proxyModelFilterBtn = document.querySelector("#proxyModelFilterBtn");
 const proxyModelFilterText = document.querySelector("#proxyModelFilterText");
@@ -32,6 +33,7 @@ let apiKey = localStorage.getItem(tokenKey) || "";
 let channels = [];
 let channelSearch = "";
 let channelSort = "created_desc";
+let channelVisibility = "all";
 let selectedProxyModels = new Set();
 let usagePage = 1;
 let usagePageSize = Number(usagePageSizeEl?.value || 20);
@@ -152,7 +154,7 @@ logoutBtn.addEventListener("click", () => {
 document.querySelector("#addChannelBtn").addEventListener("click", () => {
   const form = document.querySelector("#channelForm");
   addModal.classList.remove("hidden");
-  addModal.querySelector("input[name='apiBase']").focus();
+  addModal.querySelector("input[name='note']").focus();
 });
 
 function closeAddModal() {
@@ -358,6 +360,28 @@ channelSortEl.addEventListener("change", event => {
   channelSort = event.currentTarget.value;
   renderChannels();
 });
+channelVisibilityControl.addEventListener("click", async event => {
+  const button = event.target.closest("[data-channel-visibility]");
+  if (!button || button.dataset.channelVisibility === channelVisibility) return;
+  const previous = channelVisibility;
+  channelVisibility = button.dataset.channelVisibility;
+  renderChannelVisibilityControl();
+  renderChannels();
+  channelVisibilityControl.querySelectorAll("button").forEach(item => { item.disabled = true; });
+  try {
+    await request("/api/preferences", {
+      method: "PUT",
+      body: JSON.stringify({ channelVisibility })
+    });
+  } catch (error) {
+    channelVisibility = previous;
+    renderChannelVisibilityControl();
+    renderChannels();
+    showToast(`展示偏好保存失败：${error.message}`, "error");
+  } finally {
+    channelVisibilityControl.querySelectorAll("button").forEach(item => { item.disabled = false; });
+  }
+});
 proxyModelFilterBtn.addEventListener("click", () => {
   proxyModelFilterPanel.classList.toggle("hidden");
   proxyModelFilterBtn.classList.toggle("open", !proxyModelFilterPanel.classList.contains("hidden"));
@@ -389,6 +413,7 @@ document.addEventListener("click", event => {
 // ─── Load Data ─────────────────────────────────────────
 
 async function loadAll() {
+  await loadPreferences();
   await Promise.all([loadChannels(), loadUsage()]);
 }
 
@@ -401,6 +426,17 @@ async function loadChannels() {
     channels = await request("/api/channels");
     renderChannelFilters();
     renderChannels();
+  } catch (error) {
+    showToast(error.message, "error");
+    if (error.message === "Unauthorized") setLoggedIn(false);
+  }
+}
+
+async function loadPreferences() {
+  try {
+    const preferences = await request("/api/preferences");
+    channelVisibility = preferences.channelVisibility === "enabled" ? "enabled" : "all";
+    renderChannelVisibilityControl();
   } catch (error) {
     showToast(error.message, "error");
     if (error.message === "Unauthorized") setLoggedIn(false);
@@ -507,6 +543,14 @@ function renderChannelFilters() {
   updateProxyModelFilterText(available.length);
 }
 
+function renderChannelVisibilityControl() {
+  channelVisibilityControl.querySelectorAll("[data-channel-visibility]").forEach(button => {
+    const active = button.dataset.channelVisibility === channelVisibility;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-pressed", String(active));
+  });
+}
+
 function updateProxyModelFilterText(total = allProxyModels().length) {
   const selected = selectedProxyModels.size;
   proxyModelFilterText.textContent = `${selected}/${total} 个模型`;
@@ -550,6 +594,8 @@ function allProxyModels() {
 }
 
 function channelMatchesFilters(channel) {
+  if (channelVisibility === "enabled" && channel.enabled === false) return false;
+
   if (channelSearch) {
     const haystack = [
       channel.note,
@@ -618,7 +664,7 @@ function renderChannels() {
             </div>
             <div class="provider-meta">
               <span class="provider-url">${escapeHtml(channel.apiBase)}</span>
-              ${channel.providerLink ? `<a href="${escapeAttr(channel.providerLink)}" target="_blank" rel="noreferrer">服务商</a>` : ""}
+              ${channel.providerLink ? `<a href="${escapeAttr(channel.providerLink)}" target="_blank" rel="noreferrer">渠道官网</a>` : ""}
             </div>
             <div class="model-chips">${modelChips}${moreChip}${noModels}</div>
             <div class="card-actions">
@@ -876,7 +922,7 @@ async function openEditModal(id) {
   editForm.elements.protocol.value = channel.protocol || "auto";
   bindProtocolAutoHint(editForm);
   editModal.classList.remove("hidden");
-  editForm.elements.apiBase.focus();
+  editForm.elements.note.focus();
 }
 
 function closeEditModal() {

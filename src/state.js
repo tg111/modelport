@@ -28,7 +28,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
 const state = {
-  db: { channels: [], usage: [] },
+  db: { channels: [], usage: [], preferences: { channelVisibility: "all" } },
   rr: new Map(),
   apiKey: ""
 };
@@ -60,12 +60,15 @@ function ensureData() {
       const db = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
       state.db = {
         channels: Array.isArray(db.channels) ? db.channels : [],
-        usage: Array.isArray(db.usage) ? db.usage : []
+        usage: Array.isArray(db.usage) ? db.usage : [],
+        preferences: {
+          channelVisibility: db.preferences?.channelVisibility === "enabled" ? "enabled" : "all"
+        }
       };
     } catch (error) {
       console.warn(`Failed to read data/db.json: ${error.message}`);
       backupBadFile(DB_FILE);
-      state.db = { channels: [], usage: [] };
+      state.db = { channels: [], usage: [], preferences: { channelVisibility: "all" } };
       saveDb();
     }
   } else {

@@ -38,6 +38,10 @@
             <span class="filter-search-icon" aria-hidden="true">⌕</span>
             <input id="channelSearch" type="search" placeholder="输入渠道名称或 API 地址">
           </label>
+          <div class="channel-visibility-control" role="group" aria-label="渠道展示范围">
+            <button type="button" data-channel-visibility="enabled" aria-pressed="false">仅看启用</button>
+            <button type="button" class="active" data-channel-visibility="all" aria-pressed="true">展示全部</button>
+          </div>
           <div class="filter-sort-wrap">
             <span>排序</span>
             <select id="channelSort" class="filter-pill sort-select">

@@ -263,6 +263,39 @@ a:hover {
   font-size: 15px;
 }
 
+.channel-visibility-control {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  height: 46px;
+  padding: 3px;
+  border: 1px solid #dedddb;
+  border-radius: 15px;
+  background: #f4f3f1;
+}
+
+.channel-visibility-control button {
+  min-width: 96px;
+  border: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: #68645e;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.channel-visibility-control button.active {
+  background: #fff;
+  color: #2f2d2a;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.12);
+}
+
+.channel-visibility-control button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .filter-pill {
   height: 46px;
   border: 1px solid #dedddb;
@@ -1278,6 +1311,7 @@ tbody tr:hover td {
   }
 
   .filter-sort-wrap,
+  .channel-visibility-control,
   .model-filter-dropdown,
   .model-filter-btn {
     width: 100%;
@@ -1285,6 +1319,10 @@ tbody tr:hover td {
 
   .filter-sort-wrap {
     justify-content: space-between;
+  }
+
+  .channel-visibility-control button {
+    min-width: 0;
   }
 
   .model-filter-panel {

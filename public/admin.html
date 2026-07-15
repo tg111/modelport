@@ -52,6 +52,10 @@
             <span class="filter-search-icon" aria-hidden="true">⌕</span>
             <input id="channelSearch" type="search" placeholder="输入渠道名称或 API 地址">
           </label>
+          <div class="channel-visibility-control" role="group" aria-label="渠道展示范围">
+            <button type="button" data-channel-visibility="enabled" aria-pressed="false">仅看启用</button>
+            <button type="button" class="active" data-channel-visibility="all" aria-pressed="true">展示全部</button>
+          </div>
           <div class="filter-sort-wrap">
             <span>排序</span>
             <select id="channelSort" class="filter-pill sort-select">
@@ -141,6 +145,14 @@
       </div>
       <form id="channelForm" class="form-stack">
         <label class="field">
+          <span>渠道名称</span>
+          <input name="note" placeholder="OpenAI 主账号、备用渠道等">
+        </label>
+        <label class="field">
+          <span>渠道官网</span>
+          <input name="providerLink" placeholder="https://example.com">
+        </label>
+        <label class="field">
           <span>API 地址 <em class="required-tag">必填</em></span>
           <input name="apiBase" placeholder="https://api.openai.com 或 https://api.openai.com/v1" required>
         </label>
@@ -157,14 +169,6 @@
               </button>
             </div>
           </div>
-        </label>
-        <label class="field">
-          <span>备注</span>
-          <input name="note" placeholder="OpenAI 主账号、备用渠道等">
-        </label>
-        <label class="field">
-          <span>服务商链接</span>
-          <input name="providerLink" placeholder="https://example.com">
         </label>
         <label class="field">
           <span>渠道协议</span>
@@ -192,6 +196,14 @@
       <form id="editForm" class="form-stack">
         <input name="id" type="hidden">
         <label class="field">
+          <span>渠道名称</span>
+          <input name="note">
+        </label>
+        <label class="field">
+          <span>渠道官网</span>
+          <input name="providerLink">
+        </label>
+        <label class="field">
           <span>API 地址 <em class="required-tag">必填</em></span>
           <input name="apiBase" required>
         </label>
@@ -208,14 +220,6 @@
               </button>
             </div>
           </div>
-        </label>
-        <label class="field">
-          <span>备注</span>
-          <input name="note">
-        </label>
-        <label class="field">
-          <span>服务商链接</span>
-          <input name="providerLink">
         </label>
         <label class="field">
           <span>渠道协议</span>
