@@ -1002,13 +1002,17 @@ a:hover {
 
 .model-row {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1.3fr) minmax(0, 1fr) auto;
+  grid-template-columns: 18px minmax(0, 1.3fr) minmax(0, 1fr) auto auto;
   gap: 10px;
   align-items: center;
 }
 
 .model-row.hidden-by-filter {
   display: none;
+}
+
+.test-model-btn {
+  width: 112px;
 }
 
 .model-row-head {
@@ -1514,6 +1518,7 @@ tbody tr:hover td {
   }
 
   .model-row [data-model-alias],
+  .model-row [data-action="set-test-model"],
   .model-row [data-action="remove-model"] {
     grid-column: 2;
   }

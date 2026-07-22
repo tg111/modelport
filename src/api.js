@@ -59,7 +59,7 @@ async function api(req, res, url) {
     saveDb();
     return sendJson(res, 201, publicChannel(channel));
   }
-  const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)(?:\/(models|fetch-models|test|enabled))?$/);
+  const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)(?:\/(models|fetch-models|test|test-model|enabled))?$/);
   if (channelMatch) {
     const channel = state.db.channels.find(item => item.id === channelMatch[1]);
     if (!channel) return sendError(res, 404, "Channel not found");
@@ -99,8 +99,11 @@ async function api(req, res, url) {
     if (req.method === "POST" && action === "test") {
       const body = await readBody(req);
       const testMessage = typeof body.message === "string" && body.message.trim() ? body.message.trim() : "你好";
+      const modelId = typeof body.modelId === "string" && body.modelId.trim()
+        ? body.modelId.trim()
+        : channel.testModelId || undefined;
       try {
-        const result = await testChannel(channel, testMessage);
+        const result = await testChannel(channel, testMessage, modelId);
         usageRecord({
           success: true,
           endpoint: "/api/channels/:id/test",
@@ -120,7 +123,9 @@ async function api(req, res, url) {
           response: responseOutputText(result.upstream.body)
         });
       } catch (error) {
-        const model = (channel.models || []).find(item => item.enabled) || (channel.models || [])[0] || {};
+        const model = modelId
+          ? (channel.models || []).find(item => item.id === modelId) || { id: modelId }
+          : (channel.models || []).find(item => item.enabled) || (channel.models || [])[0] || {};
         usageRecord({
           success: false,
           endpoint: "/api/channels/:id/test",
@@ -153,6 +158,16 @@ async function api(req, res, url) {
     if (req.method === "PUT" && action === "models") {
       const body = await readBody(req);
       channel.models = sanitizeModels(body.models);
+      if (!channel.models.some(model => model.id === channel.testModelId)) channel.testModelId = "";
+      channel.updatedAt = new Date().toISOString();
+      saveDb();
+      return sendJson(res, 200, publicChannel(channel));
+    }
+    if (req.method === "PUT" && action === "test-model") {
+      const body = await readBody(req);
+      const modelId = typeof body.modelId === "string" ? body.modelId.trim() : "";
+      if (!channel.models.some(model => model.id === modelId)) return sendError(res, 400, "Model not found for this channel");
+      channel.testModelId = modelId;
       channel.updatedAt = new Date().toISOString();
       saveDb();
       return sendJson(res, 200, publicChannel(channel));

@@ -2,9 +2,13 @@ const { openaiUrl } = require("./channels");
 const { chatToResponsesBody, responsesToChatRequest } = require("./bridge");
 const { preview, proxyHeaders, responseOutputText, upstreamError } = require("./utils");
 
-async function testChannel(channel, message = "你好") {
+async function testChannel(channel, message = "你好", modelId) {
   if (channel.enabled === false) throw new Error("Channel is disabled");
-  const model = (channel.models || []).find(item => item.enabled) || (channel.models || [])[0];
+  const models = channel.models || [];
+  const model = modelId
+    ? models.find(item => item.id === modelId)
+    : models.find(item => item.enabled) || models[0];
+  if (modelId && !model) throw new Error("Selected model was not found for this channel.");
   if (!model) throw new Error("No model found for this channel. Please fetch models first.");
   const body = {
     model: model.alias || model.id,

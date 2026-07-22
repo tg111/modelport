@@ -23,6 +23,8 @@ const proxyModelFilterList = document.querySelector("#proxyModelFilterList");
 const selectAllProxyModelsBtn = document.querySelector("#selectAllProxyModels");
 const clearChannelFiltersBtn = document.querySelector("#clearChannelFilters");
 const addModal = document.querySelector("#addModal");
+const addForm = document.querySelector("#channelForm");
+const addTitle = document.querySelector("#addTitle");
 const editModal = document.querySelector("#editModal");
 const editForm = document.querySelector("#editForm");
 const errorModal = document.querySelector("#errorModal");
@@ -151,15 +153,27 @@ logoutBtn.addEventListener("click", () => {
 
 // ─── Add Channel Modal ─────────────────────────────────
 
-document.querySelector("#addChannelBtn").addEventListener("click", () => {
-  const form = document.querySelector("#channelForm");
+function openAddModal(channel = null) {
+  addForm.reset();
+  addTitle.textContent = channel ? "复制渠道" : "添加渠道";
+  if (channel) {
+    addForm.elements.apiBase.value = channel.apiBase || "";
+    addForm.elements.apiKey.value = channel.apiKey || "";
+    addForm.elements.note.value = channel.note ? `${channel.note}（副本）` : "";
+    addForm.elements.providerLink.value = channel.providerLink || "";
+    addForm.elements.protocol.value = channel.protocol || "auto";
+  }
+  bindProtocolAutoHint(addForm);
   addModal.classList.remove("hidden");
-  addModal.querySelector("input[name='note']").focus();
-});
+  addForm.elements.note.focus();
+}
+
+document.querySelector("#addChannelBtn").addEventListener("click", () => openAddModal());
 
 function closeAddModal() {
   addModal.classList.add("hidden");
-  document.querySelector("#channelForm").reset();
+  addForm.reset();
+  addTitle.textContent = "添加渠道";
 }
 
 document.querySelector("#addCloseBtn").addEventListener("click", closeAddModal);
@@ -673,11 +687,12 @@ function renderChannels() {
                 <span class="toggle-track"></span>
                 <span class="toggle-label">${isEnabled ? "启用" : "停用"}</span>
               </label>
-              <button type="button" class="btn ghost sm" data-action="edit">编辑</button>
-              <button type="button" class="btn ghost sm" data-action="test">测试</button>
-              <button type="button" class="btn ghost sm" data-action="fetch">获取模型</button>
-              <button type="button" class="btn ghost sm" data-action="toggle-models">展开模型</button>
-              <button type="button" class="btn danger sm" data-action="delete">删除</button>
+              <button type="button" class="btn ghost sm" data-action="edit"><img class="btn-icon" src="/assets/icons/pencil.svg" alt="" aria-hidden="true">编辑</button>
+              <button type="button" class="btn ghost sm" data-action="duplicate"><img class="btn-icon" src="/assets/icons/copy.svg" alt="" aria-hidden="true">复制渠道</button>
+              <button type="button" class="btn ghost sm" data-action="test"><img class="btn-icon" src="/assets/icons/flask-conical.svg" alt="" aria-hidden="true">测试</button>
+              <button type="button" class="btn ghost sm" data-action="fetch"><img class="btn-icon" src="/assets/icons/refresh-cw.svg" alt="" aria-hidden="true">获取模型</button>
+              <button type="button" class="btn ghost sm" data-action="toggle-models"><img class="btn-icon" src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true"><span data-toggle-model-label>展开模型</span></button>
+              <button type="button" class="btn danger sm" data-action="delete"><img class="btn-icon" src="/assets/icons/trash-2.svg" alt="" aria-hidden="true">删除</button>
             </div>
           </div>
           <div class="health-panel ${healthClass}">
@@ -706,10 +721,11 @@ function renderChannels() {
             <span></span>
             <span>上游模型 ID</span>
             <span>代理模型名</span>
+            <span>测试</span>
             <span></span>
           </div>
           <div class="model-rows">
-            ${(channel.models || []).map(model => modelRowHtml(model)).join("") || `<p class="no-models-hint">尚未获取模型，可点击"获取模型"或手动添加。</p>`}
+            ${(channel.models || []).map(model => modelRowHtml(model, channel.testModelId)).join("") || `<p class="no-models-hint">尚未获取模型，可点击"获取模型"或手动添加。</p>`}
           </div>
         </div>
       </div>
@@ -756,14 +772,16 @@ function formatHour(value) {
   return String(date.getHours()).padStart(2, "0");
 }
 
-function modelRowHtml(model = {}) {
+function modelRowHtml(model = {}, testModelId = "") {
   const id = model.id || "";
   const alias = model.alias || id;
+  const isTestModel = id && id === testModelId;
   return `
     <div class="model-row" data-model-row>
       <input type="checkbox" data-model-enabled ${model.enabled !== false ? "checked" : ""} title="启用模型">
       <input type="text" data-model-id value="${escapeAttr(id)}" placeholder="上游模型 ID">
       <input type="text" data-model-alias value="${escapeAttr(alias)}" placeholder="代理模型名">
+      <button type="button" class="btn ${isTestModel ? "primary" : "ghost"} sm test-model-btn" data-action="set-test-model">${isTestModel ? "测试模型" : "设为测试模型"}</button>
       <button type="button" class="btn danger sm" data-action="remove-model">删除</button>
     </div>
   `;
@@ -807,10 +825,22 @@ async function channelAction(id, action, control) {
       openEditModal(id);
       return;
     }
+    if (action === "duplicate") {
+      await openDuplicateModal(id);
+      return;
+    }
     if (action === "test") {
-      showToast("正在发送 Responses 测试：你好", "info");
+      const channel = channels.find(item => item.id === id);
+      const model = (channel?.models || []).find(item => item.id === channel?.testModelId)
+        || (channel?.models || []).find(item => item.enabled)
+        || channel?.models?.[0];
+      if (!model) {
+        showToast("请先获取或添加模型", "error");
+        return;
+      }
+      showToast(`正在使用 ${model.alias || model.id} 测试：你好`, "info");
       try {
-        const result = await request(`/api/channels/${id}/test`, { method: "POST", body: JSON.stringify({ message: "你好" }) });
+        const result = await request(`/api/channels/${id}/test`, { method: "POST", body: JSON.stringify({ message: "你好", modelId: model.id }) });
         if (result.ok) {
           showToast(`渠道可用：${result.response || result.alias || result.model}`, "success");
         } else {
@@ -831,7 +861,8 @@ async function channelAction(id, action, control) {
       const btn = cardEl.querySelector('[data-action="toggle-models"]');
       const willOpen = modelsEl.classList.contains("hidden");
       modelsEl.classList.toggle("hidden", !willOpen);
-      btn.textContent = willOpen ? "折叠模型" : "展开模型";
+      btn.querySelector("[data-toggle-model-label]").textContent = willOpen ? "折叠模型" : "展开模型";
+      btn.querySelector(".btn-icon").src = willOpen ? "/assets/icons/chevron-up.svg" : "/assets/icons/chevron-down.svg";
       return;
     }
     if (action === "select-all" || action === "select-none" || action === "invert-selection") {
@@ -858,6 +889,25 @@ async function channelAction(id, action, control) {
       if (!rowsEl.querySelector("[data-model-row]")) {
         rowsEl.innerHTML = `<p class="no-models-hint">尚未获取模型，可点击"获取模型"或手动添加。</p>`;
       }
+      return;
+    }
+    if (action === "set-test-model") {
+      const modelId = control.closest("[data-model-row]")?.querySelector("[data-model-id]")?.value.trim();
+      if (!modelId) {
+        showToast("请先填写上游模型 ID 并保存", "error");
+        return;
+      }
+      const updatedChannel = await request(`/api/channels/${id}/test-model`, { method: "PUT", body: JSON.stringify({ modelId }) });
+      const channel = channels.find(item => item.id === id);
+      if (channel) channel.testModelId = updatedChannel.testModelId;
+      for (const row of cardEl.querySelectorAll("[data-model-row]")) {
+        const button = row.querySelector('[data-action="set-test-model"]');
+        const isTestModel = row.querySelector("[data-model-id]")?.value.trim() === modelId;
+        button.classList.toggle("primary", isTestModel);
+        button.classList.toggle("ghost", !isTestModel);
+        button.textContent = isTestModel ? "测试模型" : "设为测试模型";
+      }
+      showToast("已设为测试模型", "success");
       return;
     }
     if (action === "fetch") {
@@ -923,6 +973,18 @@ async function openEditModal(id) {
   bindProtocolAutoHint(editForm);
   editModal.classList.remove("hidden");
   editForm.elements.note.focus();
+}
+
+async function openDuplicateModal(id) {
+  let channel = channels.find(item => item.id === id);
+  if (!channel) return showToast("渠道不存在", "error");
+  try {
+    channel = await request(`/api/channels/${id}`);
+  } catch (error) {
+    showToast(error.message, "error");
+    return;
+  }
+  openAddModal(channel);
 }
 
 function closeEditModal() {

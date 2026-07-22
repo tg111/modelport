@@ -77,6 +77,7 @@ function sanitizeChannel(input, previous = {}) {
     providerLink: String(input.providerLink || ""),
     enabled: input.enabled === undefined ? previous.enabled !== false : Boolean(input.enabled),
     models: Array.isArray(previous.models) ? previous.models : [],
+    testModelId: previous.testModelId || "",
     createdAt: previous.createdAt || new Date().toISOString(),
     updatedAt: new Date().toISOString()
   };
