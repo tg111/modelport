@@ -370,9 +370,24 @@ channelSearchEl.addEventListener("input", event => {
   channelSearch = event.currentTarget.value.trim().toLowerCase();
   renderChannels();
 });
-channelSortEl.addEventListener("change", event => {
+channelSortEl.addEventListener("change", async event => {
+  const previous = channelSort;
   channelSort = event.currentTarget.value;
   renderChannels();
+  channelSortEl.disabled = true;
+  try {
+    await request("/api/preferences", {
+      method: "PUT",
+      body: JSON.stringify({ channelSort })
+    });
+  } catch (error) {
+    channelSort = previous;
+    channelSortEl.value = previous;
+    renderChannels();
+    showToast(`排序偏好保存失败：${error.message}`, "error");
+  } finally {
+    channelSortEl.disabled = false;
+  }
 });
 channelVisibilityControl.addEventListener("click", async event => {
   const button = event.target.closest("[data-channel-visibility]");
@@ -450,6 +465,10 @@ async function loadPreferences() {
   try {
     const preferences = await request("/api/preferences");
     channelVisibility = preferences.channelVisibility === "enabled" ? "enabled" : "all";
+    channelSort = ["created_desc", "created_asc", "name_asc", "success_desc", "success_asc"].includes(preferences.channelSort)
+      ? preferences.channelSort
+      : "created_desc";
+    channelSortEl.value = channelSort;
     renderChannelVisibilityControl();
   } catch (error) {
     showToast(error.message, "error");
@@ -589,9 +608,14 @@ function channelSuccessCount(channel) {
   return Number(channel.usageStats?.successCount || channel.usageCount || 0);
 }
 
+function channelName(channel) {
+  return channel.note || channel.apiBase || "";
+}
+
 function sortChannels(items) {
   return [...items].sort((a, b) => {
     if (channelSort === "created_asc") return channelCreatedAt(a) - channelCreatedAt(b);
+    if (channelSort === "name_asc") return channelName(a).localeCompare(channelName(b), "zh-CN");
     if (channelSort === "success_desc") return channelSuccessCount(b) - channelSuccessCount(a);
     if (channelSort === "success_asc") return channelSuccessCount(a) - channelSuccessCount(b);
     return channelCreatedAt(b) - channelCreatedAt(a);

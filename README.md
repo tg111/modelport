@@ -146,7 +146,7 @@ Authorization: Bearer <.env 里的 PROXY_API_KEY>
 常用接口：
 
 * `GET /api/preferences`
-* `PUT /api/preferences`（持久化管理后台的渠道展示范围）
+* `PUT /api/preferences`（持久化管理后台的渠道展示范围和排序方式）
 * `GET /api/channels`
 * `POST /api/channels`
 * `POST /api/channels/:id/fetch-models`

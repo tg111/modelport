@@ -193,9 +193,14 @@ function channelSuccessCount(channel) {
   return Number(channel.usageStats?.successCount || 0);
 }
 
+function channelName(channel) {
+  return channel.note || channel.apiBase || "";
+}
+
 function sortChannels(items) {
   return [...items].sort((a, b) => {
     if (channelSort === "created_asc") return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+    if (channelSort === "name_asc") return channelName(a).localeCompare(channelName(b), "zh-CN");
     if (channelSort === "success_desc") return channelSuccessCount(b) - channelSuccessCount(a);
     if (channelSort === "success_asc") return channelSuccessCount(a) - channelSuccessCount(b);
     return Date.parse(b.createdAt) - Date.parse(a.createdAt);

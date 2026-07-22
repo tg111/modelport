@@ -28,7 +28,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
 const state = {
-  db: { channels: [], usage: [], preferences: { channelVisibility: "all" } },
+  db: { channels: [], usage: [], preferences: { channelVisibility: "all", channelSort: "created_desc" } },
   rr: new Map(),
   apiKey: ""
 };
@@ -62,13 +62,16 @@ function ensureData() {
         channels: Array.isArray(db.channels) ? db.channels : [],
         usage: Array.isArray(db.usage) ? db.usage : [],
         preferences: {
-          channelVisibility: db.preferences?.channelVisibility === "enabled" ? "enabled" : "all"
+          channelVisibility: db.preferences?.channelVisibility === "enabled" ? "enabled" : "all",
+          channelSort: ["created_desc", "created_asc", "name_asc", "success_desc", "success_asc"].includes(db.preferences?.channelSort)
+            ? db.preferences.channelSort
+            : "created_desc"
         }
       };
     } catch (error) {
       console.warn(`Failed to read data/db.json: ${error.message}`);
       backupBadFile(DB_FILE);
-      state.db = { channels: [], usage: [], preferences: { channelVisibility: "all" } };
+      state.db = { channels: [], usage: [], preferences: { channelVisibility: "all", channelSort: "created_desc" } };
       saveDb();
     }
   } else {

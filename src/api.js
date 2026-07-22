@@ -38,10 +38,19 @@ async function api(req, res, url) {
   }
   if (req.method === "PUT" && url.pathname === "/api/preferences") {
     const body = await readBody(req);
-    if (!["all", "enabled"].includes(body.channelVisibility)) {
+    const hasVisibility = Object.hasOwn(body, "channelVisibility");
+    const hasSort = Object.hasOwn(body, "channelSort");
+    if (!hasVisibility && !hasSort) {
+      return sendError(res, 400, "At least one preference is required");
+    }
+    if (hasVisibility && !["all", "enabled"].includes(body.channelVisibility)) {
       return sendError(res, 400, "channelVisibility must be all or enabled");
     }
-    state.db.preferences.channelVisibility = body.channelVisibility;
+    if (hasSort && !["created_desc", "created_asc", "name_asc", "success_desc", "success_asc"].includes(body.channelSort)) {
+      return sendError(res, 400, "channelSort is invalid");
+    }
+    if (hasVisibility) state.db.preferences.channelVisibility = body.channelVisibility;
+    if (hasSort) state.db.preferences.channelSort = body.channelSort;
     saveDb();
     return sendJson(res, 200, state.db.preferences);
   }
