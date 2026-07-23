@@ -8,7 +8,8 @@ const {
   extractMultipartModel,
   replaceMultipartModel,
   clientIp,
-  usageErrorDetail
+  usageErrorDetail,
+  normalizeUsage
 } = require("./utils");
 
 const jsonEndpointCallers = {
@@ -16,6 +17,10 @@ const jsonEndpointCallers = {
   chat_completions: callChatCompletions,
   image_generations: callImageGenerations
 };
+
+function elapsedSeconds(startedAt) {
+  return Number(((Date.now() - startedAt) / 1000).toFixed(1));
+}
 
 async function proxyResponses(req, res, body) {
   return proxyJsonEndpoint(req, res, body, "responses");
@@ -39,29 +44,51 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
   const errors = [];
   const callEndpoint = jsonEndpointCallers[endpoint];
   for (const { channel, model } of candidates) {
+    const startedAt = Date.now();
     try {
       const upstream = await callEndpoint(channel, model.id, body);
       if (upstream.stream) {
         res.writeHead(upstream.status, upstream.headers);
         let bytes = 0;
+        let streamText = "";
+        let usage = {};
+        const streamDecoder = new TextDecoder();
+        const readUsageEvents = text => {
+          const events = text.split(/\r?\n\r?\n/);
+          const remainder = events.pop() || "";
+          for (const event of events) {
+            const data = event.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).trim()).join("\n").trim();
+            if (!data || data === "[DONE]") continue;
+            try {
+              const parsed = JSON.parse(data);
+              const candidateUsage = parsed.usage || parsed.response?.usage || parsed.response?.response?.usage;
+              if (candidateUsage) usage = normalizeUsage(candidateUsage);
+            } catch {}
+          }
+          return remainder;
+        };
         try {
           const streamBody = upstream.bridge === "chat_to_responses"
             ? chatStreamToResponsesStream(upstream.body, upstream.model || model.id)
             : upstream.body;
           for await (const chunk of streamBody) {
             bytes += chunk.length;
+            streamText += streamDecoder.decode(chunk, { stream: true });
+            streamText = readUsageEvents(streamText);
             res.write(chunk);
           }
+          streamText += streamDecoder.decode();
+          readUsageEvents(`${streamText}\n\n`);
           res.end();
-          usageRecord({ success: true, endpoint: req.url, bytes, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+          usageRecord({ success: true, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
         } catch (error) {
-          usageRecord({ success: false, endpoint: req.url, bytes, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
+          usageRecord({ success: false, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
           if (!res.destroyed && !res.writableEnded) res.end();
         }
         return;
       }
 
-      usageRecord({ success: true, endpoint: req.url, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ...normalizeUsage(upstream.body?.usage || upstream.body?.usageMetadata), model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return sendJson(res, upstream.status, upstream.body);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -69,7 +96,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
         channelNote: channel.note
       });
       errors.push(detail);
-      usageRecord({ success: false, endpoint: req.url, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
+      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }
 
@@ -91,10 +118,11 @@ async function proxyImageEdits(req, res, rawBody) {
 
   const errors = [];
   for (const { channel, model } of candidates) {
+    const startedAt = Date.now();
     try {
       const upstreamBody = replaceMultipartModel(rawBody, boundary, model.id);
       const upstream = await callImageEdits(channel, upstreamBody, req);
-      usageRecord({ success: true, endpoint: req.url, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return send(res, upstream.status, upstream.body, upstream.headers);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -102,7 +130,7 @@ async function proxyImageEdits(req, res, rawBody) {
         channelNote: channel.note
       });
       errors.push(detail);
-      usageRecord({ success: false, endpoint: req.url, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
+      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }
 

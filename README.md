@@ -153,7 +153,7 @@ Authorization: Bearer <.env 里的 PROXY_API_KEY>
 * `POST /api/channels/:id/test`
 * `PUT /api/channels/:id/models`
 * `DELETE /api/channels/:id`
-* `GET /api/usage`（支持 `status`、`model`、`channelId`、`page`、`pageSize` 查询参数）
+* `GET /api/usage`（支持 `status`、`model`、`channelId`、`page`、`pageSize` 查询参数；记录包含保留 1 位小数的 `durationSeconds`，以及上游返回的 `inputTokens`、`outputTokens`、`totalTokens`，上游未提供 usage 时对应字段为空）
 * `GET /v1/models`
 * `POST /v1/responses`
 * `POST /v1/chat/completions`

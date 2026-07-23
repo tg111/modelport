@@ -10,7 +10,7 @@ const {
   sanitizeModels
 } = require("./channels");
 const { responseOutputText, testChannel } = require("./providers");
-const { clientIp } = require("./utils");
+const { clientIp, normalizeUsage } = require("./utils");
 
 function queueProtocolDetection(channel) {
   if (channel.protocol !== "auto") return;
@@ -24,6 +24,10 @@ function queueProtocolDetection(channel) {
 function clearProtocolDetectionWhenManual(channel) {
   if (channel.protocol === "auto") return;
   delete channel.protocolDetection;
+}
+
+function elapsedSeconds(startedAt) {
+  return Number(((Date.now() - startedAt) / 1000).toFixed(1));
 }
 
 async function api(req, res, url) {
@@ -111,6 +115,7 @@ async function api(req, res, url) {
       const modelId = typeof body.modelId === "string" && body.modelId.trim()
         ? body.modelId.trim()
         : channel.testModelId || undefined;
+      const startedAt = Date.now();
       try {
         const result = await testChannel(channel, testMessage, modelId);
         usageRecord({
@@ -121,7 +126,9 @@ async function api(req, res, url) {
           channelId: channel.id,
           channelNote: channel.note,
           ip: clientIp(req),
-          request: testMessage
+          request: testMessage,
+          durationSeconds: elapsedSeconds(startedAt),
+          ...normalizeUsage(result.upstream.body?.usage || result.upstream.body?.usageMetadata)
         });
         return sendJson(res, 200, {
           ok: true,
@@ -144,6 +151,7 @@ async function api(req, res, url) {
           channelNote: channel.note,
           ip: clientIp(req),
           request: testMessage,
+          durationSeconds: elapsedSeconds(startedAt),
           error: error.message,
           upstreamStatus: error.upstreamStatus || null,
           upstreamUrl: error.upstreamUrl || null,

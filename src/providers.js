@@ -44,6 +44,9 @@ async function callImageEdits(channel, rawBody, req) {
 
 async function callJsonEndpoint(channel, endpointPath, modelId, body) {
   const upstreamBody = { ...body, model: modelId };
+  if (endpointPath === "/chat/completions" && body.stream === true && upstreamBody.stream_options === undefined) {
+    upstreamBody.stream_options = { include_usage: true };
+  }
   const upstreamUrl = openaiUrl(channel.apiBase, endpointPath);
   const res = await fetch(upstreamUrl, {
     method: "POST",

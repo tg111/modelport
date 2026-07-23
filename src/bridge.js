@@ -66,6 +66,7 @@ function responsesInputItemToMessages(item) {
 function responsesToChatRequest(body, modelId) {
   const out = { model: modelId, messages: [] };
   if (body.stream !== undefined) out.stream = body.stream;
+  if (body.stream === true) out.stream_options = { include_usage: true };
   if (body.temperature !== undefined) out.temperature = body.temperature;
   if (body.top_p !== undefined) out.top_p = body.top_p;
   if (body.max_output_tokens !== undefined) out.max_tokens = body.max_output_tokens;
@@ -147,6 +148,7 @@ async function* chatStreamToResponsesStream(stream, model) {
   const textItemId = `msg_${crypto.randomUUID()}`;
   let buffer = "";
   let textStarted = false;
+  let usage = null;
   const toolItems = new Map();
 
   yield sseEvent("response.created", {
@@ -164,6 +166,7 @@ async function* chatStreamToResponsesStream(stream, model) {
     }
 
     const delta = parsed.choices?.[0]?.delta || {};
+    if (parsed.usage) usage = parsed.usage;
     if (typeof delta.content === "string" && delta.content) {
       if (!textStarted) {
         textStarted = true;
@@ -216,7 +219,7 @@ async function* chatStreamToResponsesStream(stream, model) {
     yield sseEvent("response.function_call_arguments.done", { type: "response.function_call_arguments.done", item_id: item.id, output_index: index, arguments: item.arguments });
     yield sseEvent("response.output_item.done", { type: "response.output_item.done", output_index: index, item: { type: "function_call", id: item.id, call_id: item.call_id, name: item.name, arguments: item.arguments, status: "completed" } });
   }
-  yield responsesCompletedEvent(responseId, model);
+  yield responsesCompletedEvent(responseId, model, usage);
   yield Buffer.from("data: [DONE]\n\n", "utf8");
 }
 

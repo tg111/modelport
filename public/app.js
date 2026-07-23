@@ -12,6 +12,7 @@ const usagePageSummary = document.querySelector("#usagePageSummary");
 const usagePageSizeEl = document.querySelector("#usagePageSize");
 const usagePrevPageBtn = document.querySelector("#usagePrevPage");
 const usageNextPageBtn = document.querySelector("#usageNextPage");
+const usageIpToggleBtn = document.querySelector("#usageIpToggle");
 const channelSearchEl = document.querySelector("#channelSearch");
 const channelSortEl = document.querySelector("#channelSort");
 const channelVisibilityControl = document.querySelector(".channel-visibility-control");
@@ -40,6 +41,7 @@ let selectedProxyModels = new Set();
 let usagePage = 1;
 let usagePageSize = Number(usagePageSizeEl?.value || 20);
 let usageTotalPages = 1;
+let usageIpVisible = false;
 let errorModalTrigger = null;
 
 function bindProtocolAutoHint(formEl) {
@@ -77,6 +79,14 @@ function setSecretVisible(input, button, visible) {
   button.setAttribute("title", visible ? "隐藏密钥" : "显示密钥");
   const icon = button.querySelector("img");
   if (icon) icon.src = visible ? "/assets/icons/eye-off.svg" : "/assets/icons/eye.svg";
+}
+
+function setUsageIpVisible(visible) {
+  usageIpVisible = visible;
+  usageIpToggleBtn.setAttribute("aria-label", visible ? "隐藏真实 IP" : "显示真实 IP");
+  usageIpToggleBtn.setAttribute("title", visible ? "隐藏真实 IP" : "显示真实 IP");
+  usageIpToggleBtn.querySelector("img").src = visible ? "/assets/icons/eye-off.svg" : "/assets/icons/eye.svg";
+  loadUsage();
 }
 
 async function copyText(value) {
@@ -269,6 +279,7 @@ usageRows.addEventListener("focusin", event => {
   if (preview) showErrorTooltip(preview);
 });
 usageRows.addEventListener("focusout", hideErrorTooltip);
+usageIpToggleBtn.addEventListener("click", () => setUsageIpVisible(!usageIpVisible));
 document.querySelector(".table-wrap").addEventListener("scroll", hideErrorTooltip);
 window.addEventListener("resize", hideErrorTooltip);
 
@@ -501,12 +512,14 @@ async function loadUsage() {
             <td>${escapeHtml(row.model || "")}</td>
             <td>${escapeHtml(row.sourceModel || "")}</td>
             <td>${escapeHtml(row.channelNote || row.channelId || "")}</td>
-            <td>${escapeHtml(row.ip || "-")}</td>
+            <td>${escapeHtml(usageIpVisible ? (row.ip || "-") : (row.ip ? "***" : "-"))}</td>
+            <td>${row.durationSeconds === undefined ? "-" : `${Number(row.durationSeconds).toFixed(1)} 秒`}</td>
+            <td>${row.totalTokens === undefined ? "-" : `${Number(row.totalTokens).toLocaleString()}${row.inputTokens !== undefined || row.outputTokens !== undefined ? ` <small>(入 ${Number(row.inputTokens || 0).toLocaleString()} / 出 ${Number(row.outputTokens || 0).toLocaleString()})</small>` : ""}`}</td>
             <td class="error-cell">${failureDetailHtml(row)}</td>
             <td><button type="button" class="btn danger sm" data-usage-delete="${escapeAttr(row.id)}">删除</button></td>
           </tr>
         `).join("")
-      : `<tr><td colspan="8" style="text-align:center;color:var(--muted);padding:32px">暂无匹配的使用记录</td></tr>`;
+      : `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:32px">暂无匹配的使用记录</td></tr>`;
 
     usageRows.querySelectorAll("[data-usage-delete]").forEach(button => {
       button.addEventListener("click", () => deleteUsage(button.dataset.usageDelete));

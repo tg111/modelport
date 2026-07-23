@@ -12,6 +12,21 @@ function estimateTokens(body) {
     + Number(usage?.candidatesTokenCount || 0);
 }
 
+function normalizeUsage(usage) {
+  if (!usage || typeof usage !== "object") return {};
+  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokenCount ?? usage.promptTokenCount);
+  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokenCount ?? usage.candidatesTokenCount);
+  const totalTokens = Number(usage.total_tokens ?? usage.totalTokenCount);
+  const result = {};
+  if (Number.isFinite(inputTokens) && inputTokens >= 0) result.inputTokens = inputTokens;
+  if (Number.isFinite(outputTokens) && outputTokens >= 0) result.outputTokens = outputTokens;
+  if (Number.isFinite(totalTokens) && totalTokens >= 0) result.totalTokens = totalTokens;
+  else if (result.inputTokens !== undefined || result.outputTokens !== undefined) {
+    result.totalTokens = (result.inputTokens || 0) + (result.outputTokens || 0);
+  }
+  return result;
+}
+
 function preview(value, limit = 1200) {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   return text.length > limit ? `${text.slice(0, limit)}...` : text;
@@ -105,6 +120,7 @@ function proxyHeaders(req, extra = {}) {
 module.exports = {
   normalizeBase,
   estimateTokens,
+  normalizeUsage,
   preview,
   upstreamError,
   usageErrorDetail,

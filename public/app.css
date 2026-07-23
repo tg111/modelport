@@ -1304,6 +1304,36 @@ thead th {
   letter-spacing: 0.05em;
 }
 
+.usage-ip-heading {
+  white-space: nowrap;
+}
+
+.table-icon-btn {
+  width: 24px;
+  height: 24px;
+  padding: 4px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.table-icon-btn:hover {
+  background: #e2e8f0;
+}
+
+.table-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.table-icon-btn img {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
 tbody tr:last-child td {
   border-bottom: none;
 }
