@@ -128,6 +128,7 @@ async function api(req, res, url) {
           ip: clientIp(req),
           request: testMessage,
           durationSeconds: elapsedSeconds(startedAt),
+          ttftSeconds: null,
           ...normalizeUsage(result.upstream.body?.usage || result.upstream.body?.usageMetadata)
         });
         return sendJson(res, 200, {
@@ -152,6 +153,7 @@ async function api(req, res, url) {
           ip: clientIp(req),
           request: testMessage,
           durationSeconds: elapsedSeconds(startedAt),
+          ttftSeconds: null,
           error: error.message,
           upstreamStatus: error.upstreamStatus || null,
           upstreamUrl: error.upstreamUrl || null,

@@ -514,12 +514,13 @@ async function loadUsage() {
             <td>${escapeHtml(row.channelNote || row.channelId || "")}</td>
             <td>${escapeHtml(usageIpVisible ? (row.ip || "-") : (row.ip ? "***" : "-"))}</td>
             <td>${row.durationSeconds === undefined ? "-" : `${Number(row.durationSeconds).toFixed(1)} 秒`}</td>
+            <td>${row.ttftSeconds === null || row.ttftSeconds === undefined ? "-" : `${Number(row.ttftSeconds).toFixed(1)} 秒`}</td>
             <td>${row.totalTokens === undefined ? "-" : `${Number(row.totalTokens).toLocaleString()}${row.inputTokens !== undefined || row.outputTokens !== undefined ? ` <small>(入 ${Number(row.inputTokens || 0).toLocaleString()} / 出 ${Number(row.outputTokens || 0).toLocaleString()})</small>` : ""}`}</td>
             <td class="error-cell">${failureDetailHtml(row)}</td>
             <td><button type="button" class="btn danger sm" data-usage-delete="${escapeAttr(row.id)}">删除</button></td>
           </tr>
         `).join("")
-      : `<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:32px">暂无匹配的使用记录</td></tr>`;
+      : `<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:32px">暂无匹配的使用记录</td></tr>`;
 
     usageRows.querySelectorAll("[data-usage-delete]").forEach(button => {
       button.addEventListener("click", () => deleteUsage(button.dataset.usageDelete));

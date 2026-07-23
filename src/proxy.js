@@ -22,6 +22,10 @@ function elapsedSeconds(startedAt) {
   return Number(((Date.now() - startedAt) / 1000).toFixed(1));
 }
 
+function elapsedSecondsBetween(startedAt, finishedAt) {
+  return finishedAt === null ? null : Number(((finishedAt - startedAt) / 1000).toFixed(1));
+}
+
 async function proxyResponses(req, res, body) {
   return proxyJsonEndpoint(req, res, body, "responses");
 }
@@ -52,6 +56,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
         let bytes = 0;
         let streamText = "";
         let usage = {};
+        let firstTokenAt = null;
         const streamDecoder = new TextDecoder();
         const readUsageEvents = text => {
           const events = text.split(/\r?\n\r?\n/);
@@ -61,6 +66,12 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
             if (!data || data === "[DONE]") continue;
             try {
               const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta;
+              const hasChatToken = typeof delta?.content === "string" && delta.content.length > 0
+                || (delta?.tool_calls || []).some(item => typeof item.function?.arguments === "string" && item.function.arguments.length > 0);
+              const hasResponseToken = parsed.type === "response.output_text.delta" && typeof parsed.delta === "string" && parsed.delta.length > 0
+                || parsed.type === "response.function_call_arguments.delta" && typeof parsed.delta === "string" && parsed.delta.length > 0;
+              if (firstTokenAt === null && (hasChatToken || hasResponseToken)) firstTokenAt = Date.now();
               const candidateUsage = parsed.usage || parsed.response?.usage || parsed.response?.response?.usage;
               if (candidateUsage) usage = normalizeUsage(candidateUsage);
             } catch {}
@@ -80,15 +91,15 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
           streamText += streamDecoder.decode();
           readUsageEvents(`${streamText}\n\n`);
           res.end();
-          usageRecord({ success: true, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+          usageRecord({ success: true, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
         } catch (error) {
-          usageRecord({ success: false, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
+          usageRecord({ success: false, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
           if (!res.destroyed && !res.writableEnded) res.end();
         }
         return;
       }
 
-      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ...normalizeUsage(upstream.body?.usage || upstream.body?.usageMetadata), model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, ...normalizeUsage(upstream.body?.usage || upstream.body?.usageMetadata), model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return sendJson(res, upstream.status, upstream.body);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -96,7 +107,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
         channelNote: channel.note
       });
       errors.push(detail);
-      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
+      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }
 
@@ -122,7 +133,7 @@ async function proxyImageEdits(req, res, rawBody) {
     try {
       const upstreamBody = replaceMultipartModel(rawBody, boundary, model.id);
       const upstream = await callImageEdits(channel, upstreamBody, req);
-      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return send(res, upstream.status, upstream.body, upstream.headers);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -130,7 +141,7 @@ async function proxyImageEdits(req, res, rawBody) {
         channelNote: channel.note
       });
       errors.push(detail);
-      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
+      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }
 
