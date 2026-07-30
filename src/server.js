@@ -8,8 +8,10 @@ const {
 } = require("./state");
 const { sendError } = require("./http");
 const { route } = require("./routes");
+const { startHealthChecks } = require("./health-checks");
 
 ensureData();
+startHealthChecks();
 
 const server = http.createServer((req, res) => {
   route(req, res).catch(error => {

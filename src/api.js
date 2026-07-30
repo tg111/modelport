@@ -11,6 +11,8 @@ const {
 } = require("./channels");
 const { responseOutputText, testChannel } = require("./providers");
 const { clientIp, normalizeUsage } = require("./utils");
+const { validateSettings } = require("./settings");
+const { recordChannelFailure, recordChannelSuccess, resetChannelCircuit } = require("./circuit");
 
 function queueProtocolDetection(channel) {
   if (channel.protocol !== "auto") return;
@@ -36,6 +38,16 @@ async function api(req, res, url) {
     return sendJson(res, body.apiKey === state.apiKey ? 200 : 401, { ok: body.apiKey === state.apiKey });
   }
   if (!requireAuth(req, res)) return;
+
+  if (req.method === "GET" && url.pathname === "/api/settings") {
+    return sendJson(res, 200, state.db.settings);
+  }
+  if (req.method === "PUT" && url.pathname === "/api/settings") {
+    const body = await readBody(req);
+    state.db.settings = validateSettings(body);
+    saveDb();
+    return sendJson(res, 200, state.db.settings);
+  }
 
   if (req.method === "GET" && url.pathname === "/api/preferences") {
     return sendJson(res, 200, state.db.preferences);
@@ -72,7 +84,7 @@ async function api(req, res, url) {
     saveDb();
     return sendJson(res, 201, publicChannel(channel));
   }
-  const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)(?:\/(models|fetch-models|test|test-model|enabled))?$/);
+  const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)(?:\/(models|fetch-models|test|test-model|enabled|circuit-reset))?$/);
   if (channelMatch) {
     const channel = state.db.channels.find(item => item.id === channelMatch[1]);
     if (!channel) return sendError(res, 404, "Channel not found");
@@ -118,6 +130,7 @@ async function api(req, res, url) {
       const startedAt = Date.now();
       try {
         const result = await testChannel(channel, testMessage, modelId);
+        recordChannelSuccess(channel);
         usageRecord({
           success: true,
           endpoint: "/api/channels/:id/test",
@@ -140,6 +153,7 @@ async function api(req, res, url) {
           response: responseOutputText(result.upstream.body)
         });
       } catch (error) {
+        recordChannelFailure(channel, error);
         const model = modelId
           ? (channel.models || []).find(item => item.id === modelId) || { id: modelId }
           : (channel.models || []).find(item => item.enabled) || (channel.models || [])[0] || {};
@@ -172,6 +186,10 @@ async function api(req, res, url) {
       channel.enabled = Boolean(body.enabled);
       channel.updatedAt = new Date().toISOString();
       saveDb();
+      return sendJson(res, 200, publicChannel(channel));
+    }
+    if (req.method === "POST" && action === "circuit-reset") {
+      resetChannelCircuit(channel);
       return sendJson(res, 200, publicChannel(channel));
     }
     if (req.method === "PUT" && action === "models") {

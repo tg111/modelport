@@ -71,6 +71,22 @@ PROXY_API_KEY=pwd
 http://localhost:8880/admin
 ```
 
+## 综合配置与自动熔断
+
+登录管理后台后，点击右上角“综合配置”可以调整：
+
+* 文本请求超时：流式请求等待首个文本或工具参数 Token 的最长时间；非流式请求等待完整响应的最长时间。默认 120 秒。
+* 图片请求超时：图片生成和图片编辑请求等待完整响应的最长时间。默认 300 秒。
+* 连续失败次数：渠道达到阈值后自动熔断。默认 3 次。
+* 常规冷却时间：熔断后等待多久允许一次恢复探测。默认 60 秒。
+* 鉴权失败冷却时间：HTTP 401/403 会立即熔断并使用此冷却时间。默认 900 秒。
+
+网络错误、超时、HTTP 429 和 HTTP 5xx 会计入连续失败；普通 HTTP 4xx 和客户端主动断开不会计入。HTTP 429 返回 `Retry-After` 时，实际冷却时间不会短于上游要求。
+
+冷却结束后，只有人工启用且设置了已启用测试模型的熔断渠道会进入主动测活。服务使用该测试模型发送“你好”，同一渠道同时只执行一次测活：成功则自动恢复，失败则重新熔断。人工禁用、未设置测试模型或测试模型未启用的渠道不会自动测活，真实业务请求也不会代替测活请求进入熔断渠道。
+
+自动熔断不会改变渠道的人工启用状态。渠道卡片会显示熔断状态，也可以点击“立即恢复”手动清除熔断。
+
 ## Codex 配置
 
 在 `~/.codex/config.toml` 中添加自定义 provider：
@@ -147,10 +163,13 @@ Authorization: Bearer <.env 里的 PROXY_API_KEY>
 
 * `GET /api/preferences`
 * `PUT /api/preferences`（持久化管理后台的渠道展示范围和排序方式）
+* `GET /api/settings`
+* `PUT /api/settings`
 * `GET /api/channels`
 * `POST /api/channels`
 * `POST /api/channels/:id/fetch-models`
 * `POST /api/channels/:id/test`
+* `POST /api/channels/:id/circuit-reset`
 * `PUT /api/channels/:id/models`
 * `DELETE /api/channels/:id`
 * `GET /api/usage`（支持 `status`、`model`、`channelId`、`page`、`pageSize` 查询参数；记录包含保留 1 位小数的 `durationSeconds`、流式请求的 `ttftSeconds`（首字延迟），以及上游返回的 `inputTokens`、`outputTokens`、`totalTokens`，上游未提供对应数据时字段为空）

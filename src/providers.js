@@ -1,6 +1,7 @@
 const { openaiUrl } = require("./channels");
 const { chatToResponsesBody, responsesToChatRequest } = require("./bridge");
 const { preview, proxyHeaders, responseOutputText, upstreamError } = require("./utils");
+const { state } = require("./state");
 
 async function testChannel(channel, message = "你好", modelId) {
   if (channel.enabled === false) throw new Error("Channel is disabled");
@@ -35,32 +36,101 @@ async function callChatCompletions(channel, modelId, body) {
 }
 
 async function callImageGenerations(channel, modelId, body) {
-  return callJsonEndpoint(channel, "/images/generations", modelId, body);
+  const endpointPath = "/images/generations";
+  return callJsonEndpoint(channel, endpointPath, modelId, body, {
+    timeoutMs: state.db.settings.imageTimeoutSeconds * 1000,
+    timeoutLabel: "image request"
+  });
 }
 
 async function callImageEdits(channel, rawBody, req) {
-  return callRawEndpoint(channel, "/images/edits", rawBody, req);
+  return callRawEndpoint(channel, "/images/edits", rawBody, req, {
+    timeoutMs: state.db.settings.imageTimeoutSeconds * 1000,
+    timeoutLabel: "image request"
+  });
 }
 
-async function callJsonEndpoint(channel, endpointPath, modelId, body) {
+function requestTimer(timeoutMs) {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  timer.unref?.();
+  return {
+    signal: controller.signal,
+    timedOut: () => timedOut,
+    cancel: () => clearTimeout(timer)
+  };
+}
+
+function timeoutError(timeoutMs, timeoutLabel, upstreamUrl) {
+  return upstreamError(`Upstream ${timeoutLabel} timed out after ${timeoutMs / 1000} seconds`, {
+    isTimeout: true,
+    timeoutMs,
+    upstreamUrl
+  });
+}
+
+function retryAfterMs(res) {
+  const value = res.headers.get("retry-after");
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+}
+
+async function* timeoutAwareBody(body, timeout, timeoutMs, timeoutLabel, upstreamUrl) {
+  try {
+    for await (const chunk of body) yield chunk;
+  } catch (error) {
+    if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+    throw error;
+  } finally {
+    timeout.cancel();
+  }
+}
+
+async function callJsonEndpoint(channel, endpointPath, modelId, body, options = {}) {
   const upstreamBody = { ...body, model: modelId };
   if (endpointPath === "/chat/completions" && body.stream === true && upstreamBody.stream_options === undefined) {
     upstreamBody.stream_options = { include_usage: true };
   }
   const upstreamUrl = openaiUrl(channel.apiBase, endpointPath);
-  const res = await fetch(upstreamUrl, {
-    method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${channel.apiKey}` },
-    body: JSON.stringify(upstreamBody)
-  });
+  const timeoutMs = options.timeoutMs || state.db.settings.textTimeoutSeconds * 1000;
+  const timeoutLabel = options.timeoutLabel || "text request";
+  const timeout = requestTimer(timeoutMs);
+  let res;
+  try {
+    res = await fetch(upstreamUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${channel.apiKey}` },
+      body: JSON.stringify(upstreamBody),
+      signal: timeout.signal
+    });
+  } catch (error) {
+    timeout.cancel();
+    if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+    throw error;
+  }
 
   if (body.stream === true) {
     if (!res.ok) {
-      const text = await res.text().catch(() => "");
+      let text = "";
+      try {
+        text = await res.text();
+      } catch (error) {
+        timeout.cancel();
+        if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+      }
+      timeout.cancel();
       throw upstreamError(`Upstream request failed: ${res.status}`, {
         upstreamStatus: res.status,
         upstreamUrl,
-        upstreamBody: preview(text)
+        upstreamBody: preview(text),
+        retryAfterMs: retryAfterMs(res)
       });
     }
     return {
@@ -71,29 +141,58 @@ async function callJsonEndpoint(channel, endpointPath, modelId, body) {
         "cache-control": res.headers.get("cache-control") || "no-cache",
         connection: res.headers.get("connection") || "keep-alive"
       },
-      body: res.body
+      body: timeoutAwareBody(res.body, timeout, timeoutMs, timeoutLabel, upstreamUrl),
+      cancelTimeout: timeout.cancel
     };
   }
 
-  const data = await res.json().catch(() => ({}));
+  let data;
+  try {
+    data = await res.json();
+  } catch (error) {
+    timeout.cancel();
+    if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+    data = {};
+  }
+  timeout.cancel();
   if (!res.ok) throw upstreamError(data.error?.message || `Upstream request failed: ${res.status}`, {
     upstreamStatus: res.status,
     upstreamUrl,
-    upstreamBody: preview(data)
+    upstreamBody: preview(data),
+    retryAfterMs: retryAfterMs(res)
   });
   return { stream: false, status: res.status, body: data };
 }
 
-async function callRawEndpoint(channel, endpointPath, rawBody, req) {
+async function callRawEndpoint(channel, endpointPath, rawBody, req, options = {}) {
   const upstreamUrl = openaiUrl(channel.apiBase, endpointPath);
-  const res = await fetch(upstreamUrl, {
-    method: "POST",
-    headers: proxyHeaders(req, { authorization: `Bearer ${channel.apiKey}` }),
-    body: rawBody
-  });
+  const timeoutMs = options.timeoutMs || state.db.settings.textTimeoutSeconds * 1000;
+  const timeoutLabel = options.timeoutLabel || "request";
+  const timeout = requestTimer(timeoutMs);
+  let res;
+  try {
+    res = await fetch(upstreamUrl, {
+      method: "POST",
+      headers: proxyHeaders(req, { authorization: `Bearer ${channel.apiKey}` }),
+      body: rawBody,
+      signal: timeout.signal
+    });
+  } catch (error) {
+    timeout.cancel();
+    if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+    throw error;
+  }
 
   const type = res.headers.get("content-type") || "application/json; charset=utf-8";
-  const text = await res.text().catch(() => "");
+  let text;
+  try {
+    text = await res.text();
+  } catch (error) {
+    timeout.cancel();
+    if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+    throw error;
+  }
+  timeout.cancel();
   let body = text;
   if (type.toLowerCase().includes("application/json")) {
     body = text ? JSON.parse(text) : {};
@@ -101,7 +200,8 @@ async function callRawEndpoint(channel, endpointPath, rawBody, req) {
   if (!res.ok) throw upstreamError(body?.error?.message || `Upstream request failed: ${res.status}`, {
     upstreamStatus: res.status,
     upstreamUrl,
-    upstreamBody: preview(body)
+    upstreamBody: preview(body),
+    retryAfterMs: retryAfterMs(res)
   });
   return { stream: false, status: res.status, body, headers: { "content-type": type } };
 }

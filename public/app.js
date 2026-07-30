@@ -31,6 +31,8 @@ const editForm = document.querySelector("#editForm");
 const errorModal = document.querySelector("#errorModal");
 const errorDetailText = document.querySelector("#errorDetailText");
 const errorTooltip = document.querySelector("#errorTooltip");
+const settingsModal = document.querySelector("#settingsModal");
+const settingsForm = document.querySelector("#settingsForm");
 
 let apiKey = localStorage.getItem(tokenKey) || "";
 let channels = [];
@@ -43,6 +45,7 @@ let usagePageSize = Number(usagePageSizeEl?.value || 20);
 let usageTotalPages = 1;
 let usageIpVisible = false;
 let errorModalTrigger = null;
+let settings = null;
 
 function bindProtocolAutoHint(formEl) {
   const select = formEl.querySelector("select[name='protocol']");
@@ -159,6 +162,48 @@ logoutBtn.addEventListener("click", () => {
   apiKey = "";
   localStorage.removeItem(tokenKey);
   setLoggedIn(false);
+});
+
+function closeSettingsModal() {
+  settingsModal.classList.add("hidden");
+  document.querySelector("#settingsBtn").focus();
+}
+
+function fillSettingsForm(value) {
+  for (const [key, setting] of Object.entries(value || {})) {
+    if (settingsForm.elements[key]) settingsForm.elements[key].value = setting;
+  }
+}
+
+document.querySelector("#settingsBtn").addEventListener("click", async () => {
+  try {
+    settings = await request("/api/settings");
+    fillSettingsForm(settings);
+    settingsModal.classList.remove("hidden");
+    settingsForm.elements.textTimeoutSeconds.focus();
+  } catch (error) {
+    showToast(`配置加载失败：${error.message}`, "error");
+  }
+});
+document.querySelector("#settingsCloseBtn").addEventListener("click", closeSettingsModal);
+document.querySelector("#settingsCancelBtn").addEventListener("click", closeSettingsModal);
+settingsModal.addEventListener("click", event => {
+  if (event.target === settingsModal) closeSettingsModal();
+});
+settingsForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const submitBtn = settingsForm.querySelector("button[type='submit']");
+  const payload = Object.fromEntries([...new FormData(settingsForm)].map(([key, value]) => [key, Number(value)]));
+  submitBtn.disabled = true;
+  try {
+    settings = await request("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
+    closeSettingsModal();
+    showToast("综合配置已保存", "success");
+  } catch (error) {
+    showToast(`配置保存失败：${error.message}`, "error");
+  } finally {
+    submitBtn.disabled = false;
+  }
 });
 
 // ─── Add Channel Modal ─────────────────────────────────
@@ -311,6 +356,7 @@ document.addEventListener("keydown", event => {
     if (!editModal.classList.contains("hidden")) closeEditModal();
     if (!addModal.classList.contains("hidden")) closeAddModal();
     if (!errorModal.classList.contains("hidden")) closeErrorModal();
+    if (!settingsModal.classList.contains("hidden")) closeSettingsModal();
   }
 });
 
@@ -701,8 +747,17 @@ function renderChannels() {
       : detection.status === "failed"
         ? `<span class="badge protocol-badge">识别失败</span>`
         : "";
-    const healthClass = !totalCount ? "idle" : failedCount ? (successCount ? "warn" : "bad") : "good";
-    const healthText = !totalCount ? "无请求" : failedCount ? (successCount ? "部分失败" : "全部失败") : "运行正常";
+    const circuit = channel.circuit || {};
+    const circuitOpen = circuit.status === "open";
+    const circuitHalfOpen = circuit.status === "half_open";
+    const circuitBadge = circuitOpen
+      ? `<span class="badge circuit-badge open">已熔断</span>`
+      : circuitHalfOpen ? `<span class="badge circuit-badge half-open">等待探测</span>` : "";
+    const healthClass = circuitOpen ? "bad" : circuitHalfOpen ? "warn" : !totalCount ? "idle" : failedCount ? (successCount ? "warn" : "bad") : "good";
+    const healthText = circuitOpen ? "自动熔断" : circuitHalfOpen ? "等待恢复探测" : !totalCount ? "无请求" : failedCount ? (successCount ? "部分失败" : "全部失败") : "运行正常";
+    const circuitDetail = circuitOpen || circuitHalfOpen
+      ? `<div class="circuit-detail">${circuit.retryAt ? `恢复探测：${escapeHtml(new Date(circuit.retryAt).toLocaleString())}` : "等待恢复探测"}${circuit.reason?.message ? `<br>${escapeHtml(circuit.reason.message)}` : ""}</div>`
+      : circuit.consecutiveFailures ? `<div class="circuit-detail">连续失败 ${Number(circuit.consecutiveFailures)} 次</div>` : "";
 
     return `
       <div class="channel-card" data-id="${channel.id}">
@@ -713,6 +768,7 @@ function renderChannels() {
               <span class="card-name">${escapeHtml(channel.note || channel.apiBase)}</span>
               <span class="badge protocol-badge">${protocolLabel}</span>
               ${detectionBadge}
+              ${circuitBadge}
             </div>
             <div class="provider-meta">
               <span class="provider-url">${escapeHtml(channel.apiBase)}</span>
@@ -729,6 +785,7 @@ function renderChannels() {
               <button type="button" class="btn ghost sm" data-action="duplicate"><img class="btn-icon" src="/assets/icons/copy.svg" alt="" aria-hidden="true">复制渠道</button>
               <button type="button" class="btn ghost sm" data-action="test"><img class="btn-icon" src="/assets/icons/flask-conical.svg" alt="" aria-hidden="true">测试</button>
               <button type="button" class="btn ghost sm" data-action="fetch"><img class="btn-icon" src="/assets/icons/refresh-cw.svg" alt="" aria-hidden="true">获取模型</button>
+              ${circuitOpen || circuitHalfOpen ? `<button type="button" class="btn ghost sm" data-action="reset-circuit">立即恢复</button>` : ""}
               <button type="button" class="btn ghost sm" data-action="toggle-models"><img class="btn-icon" src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true"><span data-toggle-model-label>展开模型</span></button>
               <button type="button" class="btn danger sm" data-action="delete"><img class="btn-icon" src="/assets/icons/trash-2.svg" alt="" aria-hidden="true">删除</button>
             </div>
@@ -742,6 +799,7 @@ function renderChannels() {
               <span><b class="stat-ok">${successCount}</b> 成功</span>
               <span><b class="stat-fail">${failedCount}</b> 失败</span>
             </div>
+            ${circuitDetail}
             ${recentBar}
           </div>
         </div>
@@ -856,6 +914,12 @@ async function channelAction(id, action, control) {
     if (action === "toggle-enabled") {
       await request(`/api/channels/${id}/enabled`, { method: "PUT", body: JSON.stringify({ enabled: control.checked }) });
       showToast(control.checked ? "渠道已启用" : "渠道已停用", "success");
+      await loadChannels();
+      return;
+    }
+    if (action === "reset-circuit") {
+      await request(`/api/channels/${id}/circuit-reset`, { method: "POST" });
+      showToast("渠道熔断状态已恢复", "success");
       await loadChannels();
       return;
     }

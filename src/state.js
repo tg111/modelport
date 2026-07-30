@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
+const { DEFAULT_SETTINGS, normalizeSettings } = require("./settings");
 
 const ROOT_DIR = path.resolve(__dirname, "..");
 const PUBLIC_DIR = path.join(ROOT_DIR, "public");
@@ -28,7 +29,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(ROOT_DIR, "data");
 const DB_FILE = path.join(DATA_DIR, "db.json");
 
 const state = {
-  db: { channels: [], usage: [], preferences: { channelVisibility: "all", channelSort: "created_desc" } },
+  db: { channels: [], usage: [], preferences: { channelVisibility: "all", channelSort: "created_desc" }, settings: { ...DEFAULT_SETTINGS } },
   rr: new Map(),
   apiKey: ""
 };
@@ -66,12 +67,13 @@ function ensureData() {
           channelSort: ["created_desc", "created_asc", "name_asc", "success_desc", "success_asc"].includes(db.preferences?.channelSort)
             ? db.preferences.channelSort
             : "created_desc"
-        }
+        },
+        settings: normalizeSettings(db.settings)
       };
     } catch (error) {
       console.warn(`Failed to read data/db.json: ${error.message}`);
       backupBadFile(DB_FILE);
-      state.db = { channels: [], usage: [], preferences: { channelVisibility: "all", channelSort: "created_desc" } };
+      state.db = { channels: [], usage: [], preferences: { channelVisibility: "all", channelSort: "created_desc" }, settings: { ...DEFAULT_SETTINGS } };
       saveDb();
     }
   } else {
@@ -125,5 +127,6 @@ module.exports = {
   state,
   ensureData,
   saveDb,
+  queueDbSave,
   usageRecord
 };

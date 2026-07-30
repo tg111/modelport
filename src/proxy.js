@@ -4,6 +4,12 @@ const { chatStreamToResponsesStream } = require("./bridge");
 const { sortedCandidates } = require("./channels");
 const { callChatCompletions, callImageEdits, callImageGenerations, callResponses } = require("./providers");
 const {
+  beginChannelAttempt,
+  recordChannelFailure,
+  recordChannelSuccess,
+  releaseChannelAttempt
+} = require("./circuit");
+const {
   extractMultipartBoundary,
   extractMultipartModel,
   replaceMultipartModel,
@@ -48,6 +54,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
   const errors = [];
   const callEndpoint = jsonEndpointCallers[endpoint];
   for (const { channel, model } of candidates) {
+    if (!beginChannelAttempt(channel)) continue;
     const startedAt = Date.now();
     try {
       const upstream = await callEndpoint(channel, model.id, body);
@@ -71,7 +78,10 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
                 || (delta?.tool_calls || []).some(item => typeof item.function?.arguments === "string" && item.function.arguments.length > 0);
               const hasResponseToken = parsed.type === "response.output_text.delta" && typeof parsed.delta === "string" && parsed.delta.length > 0
                 || parsed.type === "response.function_call_arguments.delta" && typeof parsed.delta === "string" && parsed.delta.length > 0;
-              if (firstTokenAt === null && (hasChatToken || hasResponseToken)) firstTokenAt = Date.now();
+              if (firstTokenAt === null && (hasChatToken || hasResponseToken)) {
+                firstTokenAt = Date.now();
+                upstream.cancelTimeout?.();
+              }
               const candidateUsage = parsed.usage || parsed.response?.usage || parsed.response?.response?.usage;
               if (candidateUsage) usage = normalizeUsage(candidateUsage);
             } catch {}
@@ -90,15 +100,20 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
           }
           streamText += streamDecoder.decode();
           readUsageEvents(`${streamText}\n\n`);
+          upstream.cancelTimeout?.();
           res.end();
+          recordChannelSuccess(channel);
           usageRecord({ success: true, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
         } catch (error) {
+          upstream.cancelTimeout?.();
+          recordChannelFailure(channel, error);
           usageRecord({ success: false, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
           if (!res.destroyed && !res.writableEnded) res.end();
         }
         return;
       }
 
+      recordChannelSuccess(channel);
       usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, ...normalizeUsage(upstream.body?.usage || upstream.body?.usageMetadata), model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return sendJson(res, upstream.status, upstream.body);
     } catch (error) {
@@ -107,7 +122,16 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
         channelNote: channel.note
       });
       errors.push(detail);
+      const counted = recordChannelFailure(channel, error);
+      if (!counted) releaseChannelAttempt(channel);
       usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
+      if (endpoint === "image_generations" && error.isTimeout) {
+        return sendError(res, 504, detail.message, {
+          errors,
+          upstreamStatus: detail.upstreamStatus,
+          upstreamBody: detail.upstreamBody
+        });
+      }
     }
   }
 
@@ -129,10 +153,12 @@ async function proxyImageEdits(req, res, rawBody) {
 
   const errors = [];
   for (const { channel, model } of candidates) {
+    if (!beginChannelAttempt(channel)) continue;
     const startedAt = Date.now();
     try {
       const upstreamBody = replaceMultipartModel(rawBody, boundary, model.id);
       const upstream = await callImageEdits(channel, upstreamBody, req);
+      recordChannelSuccess(channel);
       usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return send(res, upstream.status, upstream.body, upstream.headers);
     } catch (error) {
@@ -141,6 +167,8 @@ async function proxyImageEdits(req, res, rawBody) {
         channelNote: channel.note
       });
       errors.push(detail);
+      const counted = recordChannelFailure(channel, error);
+      if (!counted) releaseChannelAttempt(channel);
       usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }

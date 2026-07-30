@@ -1,6 +1,7 @@
 const crypto = require("crypto");
 const { state } = require("./state");
 const { normalizeBase, preview, upstreamError } = require("./utils");
+const { publicCircuit } = require("./circuit");
 
 function openaiUrl(base, suffix) {
   const clean = normalizeBase(base);
@@ -39,6 +40,7 @@ function publicChannel(channel, options = {}) {
     stream: channel.stream !== false,
     ...(options.includeKey ? { apiKey } : {}),
     hasKey: Boolean(apiKey),
+    circuit: publicCircuit(channel),
     protocolDetection: channel.protocolDetection || null,
     usageCount: successCount,
     usageStats: {
