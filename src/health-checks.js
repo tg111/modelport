@@ -1,7 +1,6 @@
 const { beginHealthCheck, deferHealthCheck, recordChannelFailure, recordChannelSuccess } = require("./circuit");
 const { testChannel } = require("./providers");
-const { state, usageRecord } = require("./state");
-const { normalizeUsage, usageErrorDetail } = require("./utils");
+const { state } = require("./state");
 
 const HEALTH_CHECK_MESSAGE = "你好";
 const HEALTH_CHECK_INTERVAL_MS = 1000;
@@ -11,43 +10,13 @@ function enabledTestModel(channel) {
   return (channel.models || []).find(model => model.id === channel.testModelId && model.enabled === true) || null;
 }
 
-function elapsedSeconds(startedAt) {
-  return Number(((Date.now() - startedAt) / 1000).toFixed(1));
-}
-
 async function checkChannel(channel, model) {
-  const startedAt = Date.now();
   try {
-    const result = await testChannel(channel, HEALTH_CHECK_MESSAGE, model.id);
+    await testChannel(channel, HEALTH_CHECK_MESSAGE, model.id);
     recordChannelSuccess(channel);
-    usageRecord({
-      success: true,
-      endpoint: "health-check",
-      model: model.alias || model.id,
-      sourceModel: model.id,
-      channelId: channel.id,
-      channelNote: channel.note,
-      request: HEALTH_CHECK_MESSAGE,
-      durationSeconds: elapsedSeconds(startedAt),
-      ttftSeconds: null,
-      ...normalizeUsage(result.upstream.body?.usage || result.upstream.body?.usageMetadata)
-    });
   } catch (error) {
     const counted = recordChannelFailure(channel, error);
     if (!counted) deferHealthCheck(channel, error);
-    usageRecord({
-      success: false,
-      endpoint: "health-check",
-      model: model.alias || model.id,
-      sourceModel: model.id,
-      channelId: channel.id,
-      channelNote: channel.note,
-      request: HEALTH_CHECK_MESSAGE,
-      durationSeconds: elapsedSeconds(startedAt),
-      ttftSeconds: null,
-      ...usageErrorDetail(error),
-      error: error.message
-    });
   }
 }
 

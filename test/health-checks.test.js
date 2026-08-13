@@ -60,9 +60,29 @@ test("active health checks use the enabled test model and hello message", async 
   try {
     const channel = openChannel("active", mock.apiBase);
     state.db.channels = [channel];
+    state.db.usage = [];
     assert.equal(await runHealthChecks(), 1);
     assert.deepEqual(receivedBody, { model: "text-model", input: "你好" });
     assert.equal(channel.circuit.status, "closed");
+    assert.deepEqual(state.db.usage, []);
+  } finally {
+    await mock.close();
+  }
+});
+
+test("failed health checks reopen the circuit without writing usage logs", async () => {
+  const mock = await upstream((req, res) => {
+    res.statusCode = 503;
+    res.setHeader("content-type", "application/json");
+    res.end(JSON.stringify({ error: { message: "unavailable" } }));
+  });
+  try {
+    const channel = openChannel("failing", mock.apiBase);
+    state.db.channels = [channel];
+    state.db.usage = [];
+    assert.equal(await runHealthChecks(), 1);
+    assert.equal(channel.circuit.status, "open");
+    assert.deepEqual(state.db.usage, []);
   } finally {
     await mock.close();
   }
