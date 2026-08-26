@@ -9,12 +9,22 @@ function openaiUrl(base, suffix) {
   return `${clean}/v1${suffix}`;
 }
 
+function isImageUsageEndpoint(endpoint) {
+  const path = String(endpoint || "").split("?", 1)[0].replace(/\/+$/, "");
+  return path === "image_generations"
+    || path === "image_edits"
+    || path.endsWith("/images/generations")
+    || path.endsWith("/images/edits");
+}
+
 function calculateCacheStats(records = []) {
   let inputTokens = 0;
   let cacheReadTokens = 0;
   let cacheCreationTokens = 0;
   let calculableCount = 0;
   for (const record of records) {
+    // Image generation/edit requests do not represent cacheable text input.
+    if (isImageUsageEndpoint(record?.endpoint)) continue;
     // Locally estimated input tokens have no corresponding upstream cache
     // information, so excluding them keeps the rate honest.
     if (record?.usageSource === "estimated") continue;
@@ -312,6 +322,7 @@ function sortedCandidates(alias) {
 module.exports = {
   openaiUrl,
   publicChannel,
+  isImageUsageEndpoint,
   calculateCacheStats,
   sanitizeChannel,
   detectProtocol,

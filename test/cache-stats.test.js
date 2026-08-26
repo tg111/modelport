@@ -45,3 +45,25 @@ test("supports legacy cachedTokens and treats missing cache details as zero", ()
   assert.equal(stats.inputTokens, 200);
   assert.equal(stats.cacheReadRate, 10);
 });
+
+test("excludes image generation and edit requests from cache statistics", () => {
+  const stats = calculateCacheStats([
+    { endpoint: "/v1/images/generations?size=1024", inputTokens: 900, cacheReadTokens: 900, usageSource: "upstream" },
+    { endpoint: "/images/edits", inputTokens: 800, cacheReadTokens: 800, usageSource: "upstream" },
+    { endpoint: "/v1/responses", inputTokens: 100, cacheReadTokens: 25, usageSource: "upstream" }
+  ]);
+  assert.equal(stats.inputTokens, 100);
+  assert.equal(stats.cacheReadTokens, 25);
+  assert.equal(stats.cacheReadRate, 25);
+  assert.equal(stats.calculableCount, 1);
+});
+
+test("includes failed requests when they contain real upstream usage", () => {
+  const stats = calculateCacheStats([
+    { endpoint: "/v1/responses", success: false, inputTokens: 200, cacheReadTokens: 50, usageSource: "upstream" }
+  ]);
+  assert.equal(stats.inputTokens, 200);
+  assert.equal(stats.cacheReadTokens, 50);
+  assert.equal(stats.cacheReadRate, 25);
+  assert.equal(stats.calculableCount, 1);
+});
