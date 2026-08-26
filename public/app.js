@@ -13,6 +13,8 @@ const usagePageSizeEl = document.querySelector("#usagePageSize");
 const usagePrevPageBtn = document.querySelector("#usagePrevPage");
 const usageNextPageBtn = document.querySelector("#usageNextPage");
 const usageIpToggleBtn = document.querySelector("#usageIpToggle");
+const usageCacheReadRate = document.querySelector("#usageCacheReadRate");
+const usageCacheTokenSummary = document.querySelector("#usageCacheTokenSummary");
 const channelSearchEl = document.querySelector("#channelSearch");
 const channelSortEl = document.querySelector("#channelSort");
 const channelVisibilityControl = document.querySelector(".channel-visibility-control");
@@ -549,6 +551,7 @@ async function loadUsage() {
     usagePage = Array.isArray(result) ? 1 : Number(result.page || 1);
     usagePageSize = Array.isArray(result) ? usagePageSize : Number(result.pageSize || usagePageSize);
     usageTotalPages = Math.max(1, Math.ceil(total / usagePageSize));
+    renderUsageCacheStats(Array.isArray(result) ? null : result.cacheStats);
     renderUsageFilters(result.filters);
     usageRows.innerHTML = rows.length
       ? rows.map(row => `
@@ -561,7 +564,7 @@ async function loadUsage() {
             <td>${escapeHtml(usageIpVisible ? (row.ip || "-") : (row.ip ? "***" : "-"))}</td>
             <td>${row.durationSeconds === undefined ? "-" : `${Number(row.durationSeconds).toFixed(1)} 秒`}</td>
             <td>${row.ttftSeconds === null || row.ttftSeconds === undefined ? "-" : `${Number(row.ttftSeconds).toFixed(1)} 秒`}</td>
-            <td>${row.totalTokens === undefined ? "-" : `${Number(row.totalTokens).toLocaleString()}${row.inputTokens !== undefined || row.outputTokens !== undefined ? ` <small>(入 ${Number(row.inputTokens || 0).toLocaleString()} / 出 ${Number(row.outputTokens || 0).toLocaleString()})</small>` : ""}`}</td>
+            <td>${row.totalTokens === undefined ? "-" : `${Number(row.totalTokens).toLocaleString()}${row.inputTokens !== undefined || row.outputTokens !== undefined ? ` <small>(入 ${Number(row.inputTokens || 0).toLocaleString()} / 出 ${row.outputTokens === undefined ? "未知" : Number(row.outputTokens).toLocaleString()})</small>` : ""}${(row.cacheReadTokens ?? row.cachedTokens) !== undefined ? ` <small>缓存读取 ${Number(row.cacheReadTokens ?? row.cachedTokens).toLocaleString()}</small>` : ""}${row.cacheCreationTokens !== undefined ? ` <small>缓存创建 ${Number(row.cacheCreationTokens).toLocaleString()}</small>` : ""}${row.reasoningTokens !== undefined ? ` <small>推理 ${Number(row.reasoningTokens).toLocaleString()}</small>` : ""}${row.usageQuality === "estimated" ? ` <small title="上游未返回 usage，仅本地估算入 token">估算</small>` : row.usageQuality === "derived" ? ` <small title="总 token 由上游入/出 token 推导">推导</small>` : row.usageQuality === "inconsistent" ? ` <small title="上游总 token 与入/出 token 不一致">不一致</small>` : ""}`}</td>
             <td class="error-cell">${failureDetailHtml(row)}</td>
             <td><button type="button" class="btn danger sm" data-usage-delete="${escapeAttr(row.id)}">删除</button></td>
           </tr>
@@ -575,6 +578,20 @@ async function loadUsage() {
   } catch (error) {
     showToast(error.message, "error");
   }
+}
+
+function formatCacheRate(value) {
+  if (value === null || value === undefined) return "--";
+  const rate = Number(value);
+  return Number.isFinite(rate) ? `${rate.toFixed(2).replace(/\.00$/, "")}%` : "--";
+}
+
+function renderUsageCacheStats(cacheStats) {
+  const rate = cacheStats?.cacheReadRate;
+  usageCacheReadRate.textContent = formatCacheRate(rate);
+  usageCacheTokenSummary.textContent = rate === null || rate === undefined
+    ? "暂无可计算数据"
+    : `缓存读取 ${Number(cacheStats.cacheReadTokens || 0).toLocaleString()} / 输入 ${Number(cacheStats.inputTokens || 0).toLocaleString()} token，${Number(cacheStats.calculableCount || 0).toLocaleString()} 条可计算记录`;
 }
 
 function renderUsageFilters(filters = {}) {
@@ -737,6 +754,8 @@ function renderChannels() {
     const failedCount = Number(stats.failedCount || 0);
     const totalCount = Number(stats.totalCount || 0);
     const successRate = totalCount ? Math.round((successCount / totalCount) * 1000) / 10 : null;
+    const cacheStats = channel.cacheStats || stats;
+    const cacheRate = cacheStats.cacheReadRate;
     const recentBar = statusBarHtml(stats.buckets || []);
     const protocolLabel = channel.protocol === "chat"
       ? "Chat Completions"
@@ -798,6 +817,10 @@ function renderChannels() {
             <div class="stat-counts" data-tooltip="最近 24 小时：成功 ${successCount}，失败 ${failedCount}${successRate === null ? "" : `，成功率 ${successRate}%`}">
               <span><b class="stat-ok">${successCount}</b> 成功</span>
               <span><b class="stat-fail">${failedCount}</b> 失败</span>
+            </div>
+            <div class="cache-rate-row" data-tooltip="最近 24 小时：缓存读取 ${Number(cacheStats.cacheReadTokens || 0).toLocaleString()} / 输入 ${Number(cacheStats.inputTokens || 0).toLocaleString()} token">
+              <span>缓存读取率</span>
+              <strong>${formatCacheRate(cacheRate)}</strong>
             </div>
             ${circuitDetail}
             ${recentBar}

@@ -9,6 +9,34 @@ function openaiUrl(base, suffix) {
   return `${clean}/v1${suffix}`;
 }
 
+function calculateCacheStats(records = []) {
+  let inputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheCreationTokens = 0;
+  let calculableCount = 0;
+  for (const record of records) {
+    // Locally estimated input tokens have no corresponding upstream cache
+    // information, so excluding them keeps the rate honest.
+    if (record?.usageSource === "estimated") continue;
+    const input = Number(record?.inputTokens);
+    const cacheReadValue = record?.cacheReadTokens ?? record?.cachedTokens ?? 0;
+    const cacheRead = Number(cacheReadValue);
+    if (!Number.isFinite(input) || input <= 0 || !Number.isFinite(cacheRead) || cacheRead < 0) continue;
+    inputTokens += input;
+    cacheReadTokens += cacheRead;
+    const creation = Number(record?.cacheCreationTokens);
+    if (Number.isFinite(creation) && creation >= 0) cacheCreationTokens += creation;
+    calculableCount += 1;
+  }
+  return {
+    inputTokens,
+    cacheReadTokens,
+    cacheCreationTokens,
+    calculableCount,
+    cacheReadRate: inputTokens > 0 ? (cacheReadTokens / inputTokens) * 100 : null
+  };
+}
+
 function publicChannel(channel, options = {}) {
   const { apiKey, ...safe } = channel;
   const now = Date.now();
@@ -24,6 +52,7 @@ function publicChannel(channel, options = {}) {
   const failedCount = usageRows.filter(record => record.success === false).length;
   const totalCount = successCount + failedCount;
   const successRate = totalCount ? successCount / totalCount : null;
+  const cacheStats = calculateCacheStats(usageRows);
   const buckets = Array.from({ length: 24 }, (_, index) => {
     const start = cutoff + index * bucketMs;
     return { start, end: start + bucketMs, successCount: 0, failedCount: 0 };
@@ -48,13 +77,15 @@ function publicChannel(channel, options = {}) {
       failedCount,
       totalCount,
       successRate,
+      ...cacheStats,
       buckets: buckets.map(bucket => ({
         start: new Date(bucket.start).toISOString(),
         end: new Date(bucket.end).toISOString(),
         successCount: bucket.successCount,
         failedCount: bucket.failedCount
       }))
-    }
+    },
+    cacheStats
   };
 }
 
@@ -281,6 +312,7 @@ function sortedCandidates(alias) {
 module.exports = {
   openaiUrl,
   publicChannel,
+  calculateCacheStats,
   sanitizeChannel,
   detectProtocol,
   detectAndUpdateProtocol,

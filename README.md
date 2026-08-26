@@ -172,7 +172,7 @@ Authorization: Bearer <.env 里的 PROXY_API_KEY>
 * `POST /api/channels/:id/circuit-reset`
 * `PUT /api/channels/:id/models`
 * `DELETE /api/channels/:id`
-* `GET /api/usage`（支持 `status`、`model`、`channelId`、`page`、`pageSize` 查询参数；记录包含保留 1 位小数的 `durationSeconds`、流式请求的 `ttftSeconds`（首字延迟），以及上游返回的 `inputTokens`、`outputTokens`、`totalTokens`，上游未提供对应数据时字段为空）
+* `GET /api/usage`（支持 `status`、`model`、`channelId`、`page`、`pageSize` 查询参数；记录包含保留 1 位小数的 `durationSeconds`、流式请求的 `ttftSeconds`（首字延迟），以及上游返回或推导的 `inputTokens`、`outputTokens`、`totalTokens`；同时保留 `cachedTokens`、`cacheReadTokens`、`reasoningTokens`、`cacheCreationTokens`、`cacheWriteTokens`、`usageQuality`、`usageSource`、`requestId` 和重试序号 `attempt`。响应中的 `cacheStats` 按当前筛选结果返回缓存读取率，计算方式为缓存读取 token 总和 / 输入 token 总和；本地估算 usage 不参与该统计。上游未提供 usage 时，仅使用 tokenizer 估算入 token，并明确标记为 `estimated`，不估算出 token）
 * `GET /v1/models`
 * `POST /v1/responses`
 * `POST /v1/chat/completions`

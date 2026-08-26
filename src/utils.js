@@ -14,17 +14,148 @@ function estimateTokens(body) {
 
 function normalizeUsage(usage) {
   if (!usage || typeof usage !== "object") return {};
-  const inputTokens = Number(usage.input_tokens ?? usage.prompt_tokens ?? usage.inputTokenCount ?? usage.promptTokenCount);
-  const outputTokens = Number(usage.output_tokens ?? usage.completion_tokens ?? usage.outputTokenCount ?? usage.candidatesTokenCount);
-  const totalTokens = Number(usage.total_tokens ?? usage.totalTokenCount);
+  const numberAt = (...values) => {
+    for (const value of values) {
+      if (value === undefined || value === null || value === "") continue;
+      const number = Number(value);
+      if (Number.isFinite(number) && number >= 0) return number;
+    }
+    return undefined;
+  };
+  const explicitInputTokens = numberAt(usage.input_tokens, usage.prompt_tokens, usage.inputTokenCount);
+  const promptTokenCount = numberAt(usage.promptTokenCount);
+  const toolUsePromptTokenCount = numberAt(usage.toolUsePromptTokenCount, usage.tool_use_prompt_token_count);
+  const inputTokens = explicitInputTokens !== undefined
+    ? explicitInputTokens
+    : promptTokenCount !== undefined || toolUsePromptTokenCount !== undefined
+      ? (promptTokenCount || 0) + (toolUsePromptTokenCount || 0)
+      : undefined;
+  const outputTokens = numberAt(usage.output_tokens, usage.completion_tokens, usage.outputTokenCount, usage.candidatesTokenCount);
+  const reportedTotalTokens = numberAt(usage.total_tokens, usage.totalTokenCount);
+  const inputDetails = usage.input_tokens_details || usage.prompt_tokens_details || {};
+  const outputDetails = usage.output_tokens_details || usage.completion_tokens_details || {};
+  const cachedTokens = numberAt(
+    inputDetails.cached_tokens,
+    inputDetails.cache_read_tokens,
+    usage.cached_tokens,
+    usage.cache_read_tokens,
+    usage.cachedContentTokenCount
+  );
+  const cacheCreationTokens = numberAt(
+    inputDetails.cache_creation_tokens,
+    inputDetails.cache_creation_input_tokens,
+    usage.cache_creation_tokens
+  );
+  const cacheWriteTokens = numberAt(inputDetails.cache_write_tokens, usage.cache_write_tokens);
+  const reasoningTokens = numberAt(
+    outputDetails.reasoning_tokens,
+    usage.reasoning_tokens,
+    usage.thoughtsTokenCount
+  );
   const result = {};
-  if (Number.isFinite(inputTokens) && inputTokens >= 0) result.inputTokens = inputTokens;
-  if (Number.isFinite(outputTokens) && outputTokens >= 0) result.outputTokens = outputTokens;
-  if (Number.isFinite(totalTokens) && totalTokens >= 0) result.totalTokens = totalTokens;
-  else if (result.inputTokens !== undefined || result.outputTokens !== undefined) {
-    result.totalTokens = (result.inputTokens || 0) + (result.outputTokens || 0);
+  if (inputTokens !== undefined) result.inputTokens = inputTokens;
+  if (outputTokens !== undefined) result.outputTokens = outputTokens;
+  if (cachedTokens !== undefined) {
+    result.cachedTokens = cachedTokens;
+    result.cacheReadTokens = cachedTokens;
+  }
+  if (cacheCreationTokens !== undefined) result.cacheCreationTokens = cacheCreationTokens;
+  if (cacheWriteTokens !== undefined) result.cacheWriteTokens = cacheWriteTokens;
+  if (reasoningTokens !== undefined) result.reasoningTokens = reasoningTokens;
+
+  const componentTotal = (inputTokens || 0) + (outputTokens || 0);
+  if (reportedTotalTokens !== undefined && (reportedTotalTokens > 0 || componentTotal === 0)) {
+    result.totalTokens = reportedTotalTokens;
+  } else if (inputTokens !== undefined || outputTokens !== undefined) {
+    result.totalTokens = componentTotal;
+    result.totalTokensDerived = true;
+  }
+
+  if (Object.keys(result).length) {
+    result.usageSource = "upstream";
+    if (result.totalTokens !== undefined && !result.totalTokensDerived && componentTotal > 0 && result.totalTokens !== componentTotal) {
+      result.usageQuality = "inconsistent";
+    } else if (result.totalTokensDerived) {
+      result.usageQuality = "derived";
+    } else {
+      result.usageQuality = "reported";
+    }
   }
   return result;
+}
+
+function estimateInputUsage(body, model = "") {
+  if (!body || typeof body !== "object") return {};
+  let encoder;
+  try {
+    const { encodingForModel, getEncoding } = require("js-tiktoken");
+    try {
+      encoder = encodingForModel(String(model || "gpt-4o"));
+    } catch {
+      encoder = getEncoding("cl100k_base");
+    }
+  } catch {
+    return {};
+  }
+
+  const segments = [];
+  const add = value => {
+    if (typeof value === "string" && value.trim()) segments.push(value.trim());
+  };
+  const addContent = content => {
+    if (typeof content === "string") return add(content);
+    if (!Array.isArray(content)) return;
+    for (const part of content) {
+      if (typeof part === "string") add(part);
+      else if (part && typeof part === "object") add(part.text ?? part.input_text ?? part.output_text ?? part.content);
+    }
+  };
+  const addInputItem = item => {
+    if (typeof item === "string") return add(item);
+    if (!item || typeof item !== "object") return;
+    add(item.role);
+    add(item.name);
+    add(item.arguments);
+    add(item.output);
+    add(item.text);
+    addContent(item.content);
+  };
+  add(body.instructions);
+  if (Array.isArray(body.input)) {
+    for (const item of body.input) addInputItem(item);
+  } else {
+    addContent(body.input);
+  }
+  if (Array.isArray(body.messages)) {
+    for (const message of body.messages) {
+      add(message?.role);
+      addContent(message?.content);
+      for (const call of message?.tool_calls || []) {
+        add(call?.function?.name);
+        add(call?.function?.arguments);
+      }
+    }
+  }
+  for (const tool of body.tools || []) {
+    add(tool?.name);
+    add(tool?.description);
+    if (tool?.parameters !== undefined) add(JSON.stringify(tool.parameters));
+    if (tool?.function) {
+      add(tool.function.name);
+      add(tool.function.description);
+      if (tool.function.parameters !== undefined) add(JSON.stringify(tool.function.parameters));
+    }
+  }
+  if (body.response_format !== undefined) add(JSON.stringify(body.response_format));
+  if (body.text?.format !== undefined) add(JSON.stringify(body.text.format));
+  if (!segments.length) return {};
+  const inputTokens = encoder.encode(segments.join("\n")).length;
+  return {
+    inputTokens,
+    totalTokens: inputTokens,
+    usageSource: "estimated",
+    usageQuality: "estimated"
+  };
 }
 
 function preview(value, limit = 1200) {
@@ -121,6 +252,7 @@ module.exports = {
   normalizeBase,
   estimateTokens,
   normalizeUsage,
+  estimateInputUsage,
   preview,
   upstreamError,
   usageErrorDetail,

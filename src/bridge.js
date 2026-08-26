@@ -1,4 +1,22 @@
 const crypto = require("crypto");
+const { normalizeUsage } = require("./utils");
+
+function responsesUsage(usage) {
+  const normalized = normalizeUsage(usage);
+  if (!normalized.usageSource) return null;
+  const result = {};
+  if (normalized.inputTokens !== undefined) result.input_tokens = normalized.inputTokens;
+  if (normalized.outputTokens !== undefined) result.output_tokens = normalized.outputTokens;
+  if (normalized.totalTokens !== undefined) result.total_tokens = normalized.totalTokens;
+  if (normalized.cachedTokens !== undefined || normalized.cacheCreationTokens !== undefined || normalized.cacheWriteTokens !== undefined) {
+    result.input_tokens_details = {};
+    if (normalized.cachedTokens !== undefined) result.input_tokens_details.cached_tokens = normalized.cachedTokens;
+    if (normalized.cacheCreationTokens !== undefined) result.input_tokens_details.cache_creation_tokens = normalized.cacheCreationTokens;
+    if (normalized.cacheWriteTokens !== undefined) result.input_tokens_details.cache_write_tokens = normalized.cacheWriteTokens;
+  }
+  if (normalized.reasoningTokens !== undefined) result.output_tokens_details = { reasoning_tokens: normalized.reasoningTokens };
+  return result;
+}
 
 function textFromContent(content) {
   if (typeof content === "string") return content;
@@ -118,7 +136,7 @@ function chatToResponsesBody(chatBody, model) {
     model: model || chatBody?.model || "",
     output,
     parallel_tool_calls: true,
-    usage: chatBody?.usage || null
+    usage: responsesUsage(chatBody?.usage)
   };
 }
 
@@ -166,7 +184,7 @@ async function* chatStreamToResponsesStream(stream, model) {
     }
 
     const delta = parsed.choices?.[0]?.delta || {};
-    if (parsed.usage) usage = parsed.usage;
+    if (parsed.usage) usage = responsesUsage(parsed.usage);
     if (typeof delta.content === "string" && delta.content) {
       if (!textStarted) {
         textStarted = true;

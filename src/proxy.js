@@ -15,8 +15,10 @@ const {
   replaceMultipartModel,
   clientIp,
   usageErrorDetail,
-  normalizeUsage
+  normalizeUsage,
+  estimateInputUsage
 } = require("./utils");
+const crypto = require("crypto");
 
 const jsonEndpointCallers = {
   responses: callResponses,
@@ -53,8 +55,11 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
 
   const errors = [];
   const callEndpoint = jsonEndpointCallers[endpoint];
+  const requestId = crypto.randomUUID();
+  let attemptNumber = 0;
   for (const { channel, model } of candidates) {
     if (!beginChannelAttempt(channel)) continue;
+    attemptNumber += 1;
     const startedAt = Date.now();
     try {
       const upstream = await callEndpoint(channel, model.id, body);
@@ -103,18 +108,21 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
           upstream.cancelTimeout?.();
           res.end();
           recordChannelSuccess(channel);
-          usageRecord({ success: true, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+          const finalUsage = Object.keys(usage).length ? usage : estimateInputUsage(body, model.id);
+          usageRecord({ requestId, attempt: attemptNumber, success: true, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...finalUsage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
         } catch (error) {
           upstream.cancelTimeout?.();
           recordChannelFailure(channel, error);
-          usageRecord({ success: false, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
+          usageRecord({ requestId, attempt: attemptNumber, success: false, endpoint: req.url, bytes, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: elapsedSecondsBetween(startedAt, firstTokenAt), ...usage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, error: error.message, ip });
           if (!res.destroyed && !res.writableEnded) res.end();
         }
         return;
       }
 
       recordChannelSuccess(channel);
-      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, ...normalizeUsage(upstream.body?.usage || upstream.body?.usageMetadata), model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+      const normalizedUsage = normalizeUsage(upstream.body?.usage || upstream.body?.usageMetadata);
+      const finalUsage = Object.keys(normalizedUsage).length ? normalizedUsage : estimateInputUsage(body, model.id);
+      usageRecord({ requestId, attempt: attemptNumber, success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, ...finalUsage, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return sendJson(res, upstream.status, upstream.body);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -124,7 +132,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
       errors.push(detail);
       const counted = recordChannelFailure(channel, error);
       if (!counted) releaseChannelAttempt(channel);
-      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
+      usageRecord({ requestId, attempt: attemptNumber, success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
       if (endpoint === "image_generations" && error.isTimeout) {
         return sendError(res, 504, detail.message, {
           errors,
@@ -152,14 +160,17 @@ async function proxyImageEdits(req, res, rawBody) {
   if (!candidates.length) return sendError(res, 404, `No enabled channel found for proxy model: ${alias}`);
 
   const errors = [];
+  const requestId = crypto.randomUUID();
+  let attemptNumber = 0;
   for (const { channel, model } of candidates) {
     if (!beginChannelAttempt(channel)) continue;
+    attemptNumber += 1;
     const startedAt = Date.now();
     try {
       const upstreamBody = replaceMultipartModel(rawBody, boundary, model.id);
       const upstream = await callImageEdits(channel, upstreamBody, req);
       recordChannelSuccess(channel);
-      usageRecord({ success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
+      usageRecord({ requestId, attempt: attemptNumber, success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return send(res, upstream.status, upstream.body, upstream.headers);
     } catch (error) {
       const detail = usageErrorDetail(error, {
@@ -169,7 +180,7 @@ async function proxyImageEdits(req, res, rawBody) {
       errors.push(detail);
       const counted = recordChannelFailure(channel, error);
       if (!counted) releaseChannelAttempt(channel);
-      usageRecord({ success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
+      usageRecord({ requestId, attempt: attemptNumber, success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
     }
   }
 

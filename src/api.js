@@ -5,6 +5,7 @@ const {
   fetchModels,
   markProtocolDetecting,
   mergeModels,
+  calculateCacheStats,
   publicChannel,
   sanitizeChannel,
   sanitizeModels
@@ -242,6 +243,7 @@ async function api(req, res, url) {
       page,
       pageSize,
       totalPages,
+      cacheStats: calculateCacheStats(rows),
       filters: {
         models,
         channels: [...channelOptions].map(([id, name]) => ({ id, name }))
