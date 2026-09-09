@@ -283,17 +283,8 @@ function mergeModels(channel, fetched) {
     seen.add(modelId);
   }
 
-  for (const old of channel.models || []) {
-    if (!old?.id || seen.has(old.id)) continue;
-    nextModels.push({
-      id: old.id,
-      alias: old.alias || old.id,
-      enabled: Boolean(old.enabled)
-    });
-    seen.add(old.id);
-  }
-
   channel.models = nextModels;
+  if (!seen.has(channel.testModelId)) channel.testModelId = "";
   channel.updatedAt = new Date().toISOString();
 }
 
