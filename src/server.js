@@ -9,9 +9,11 @@ const {
 const { sendError } = require("./http");
 const { route } = require("./routes");
 const { startHealthChecks } = require("./health-checks");
+const { startCodexCallbackListener } = require("./codex-callback");
 
 ensureData();
 startHealthChecks();
+startCodexCallbackListener();
 
 const server = http.createServer((req, res) => {
   route(req, res).catch(error => {

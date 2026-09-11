@@ -2,6 +2,13 @@ const { openaiUrl } = require("./channels");
 const { chatToResponsesBody, responsesToChatRequest } = require("./bridge");
 const { preview, proxyHeaders, responseOutputText, upstreamError } = require("./utils");
 const { state } = require("./state");
+const {
+  CODEX_UPSTREAM_BASE,
+  isCodexOAuthChannel,
+  requestCodexImage,
+  requestCodexResponse
+} = require("./codex-oauth");
+const { outboundFetch } = require("./outbound-proxy");
 
 async function testChannel(channel, message = "你好", modelId) {
   if (channel.enabled === false) throw new Error("Channel is disabled");
@@ -20,6 +27,7 @@ async function testChannel(channel, message = "你好", modelId) {
 }
 
 async function callResponses(channel, modelId, body) {
+  if (isCodexOAuthChannel(channel)) return callCodexOAuthResponses(channel, modelId, body);
   if (channel.protocol === "chat") return callChatBackedResponses(channel, modelId, body);
   return callJsonEndpoint(channel, "/responses", modelId, body);
 }
@@ -32,10 +40,16 @@ async function callChatBackedResponses(channel, modelId, body) {
 }
 
 async function callChatCompletions(channel, modelId, body) {
+  if (isCodexOAuthChannel(channel)) {
+    throw upstreamError("Codex OAuth channels support the Responses API only", { upstreamStatus: 400 });
+  }
   return callJsonEndpoint(channel, "/chat/completions", modelId, body);
 }
 
 async function callImageGenerations(channel, modelId, body) {
+  if (isCodexOAuthChannel(channel)) {
+    return callCodexOAuthImage(channel, modelId, body);
+  }
   const endpointPath = "/images/generations";
   return callJsonEndpoint(channel, endpointPath, modelId, body, {
     timeoutMs: state.db.settings.imageTimeoutSeconds * 1000,
@@ -44,6 +58,9 @@ async function callImageGenerations(channel, modelId, body) {
 }
 
 async function callImageEdits(channel, rawBody, req) {
+  if (isCodexOAuthChannel(channel)) {
+    throw upstreamError("Codex OAuth channels do not support image editing through ModelPort", { upstreamStatus: 400 });
+  }
   return callRawEndpoint(channel, "/images/edits", rawBody, req, {
     timeoutMs: state.db.settings.imageTimeoutSeconds * 1000,
     timeoutLabel: "image request"
@@ -82,6 +99,84 @@ function retryAfterMs(res) {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
+async function callCodexOAuthResponses(channel, modelId, body) {
+  return callCodexOAuthRequest(channel, modelId, body, {
+    timeoutMs: state.db.settings.textTimeoutSeconds * 1000,
+    timeoutLabel: "text request",
+    upstreamUrl: `${CODEX_UPSTREAM_BASE}/responses`,
+    request: requestCodexResponse
+  });
+}
+
+async function callCodexOAuthImage(channel, modelId, body) {
+  return callCodexOAuthRequest(channel, modelId, body, {
+    timeoutMs: state.db.settings.imageTimeoutSeconds * 1000,
+    timeoutLabel: "image request",
+    upstreamUrl: `${CODEX_UPSTREAM_BASE}/images/generations`,
+    request: requestCodexImage
+  });
+}
+
+async function callCodexOAuthRequest(channel, modelId, body, options) {
+  const { timeoutMs, timeoutLabel, upstreamUrl, request } = options;
+  const timeout = requestTimer(timeoutMs);
+  let res;
+  try {
+    res = await request(channel, modelId, body, timeout.signal);
+  } catch (error) {
+    timeout.cancel();
+    if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+    throw error;
+  }
+
+  if (body.stream === true) {
+    if (!res.ok) {
+      let text = "";
+      try {
+        text = await res.text();
+      } catch (error) {
+        timeout.cancel();
+        if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+      }
+      timeout.cancel();
+      throw upstreamError(`Upstream request failed: ${res.status}`, {
+        upstreamStatus: res.status,
+        upstreamUrl,
+        upstreamBody: preview(text),
+        retryAfterMs: retryAfterMs(res)
+      });
+    }
+    return {
+      stream: true,
+      status: res.status,
+      headers: {
+        "content-type": res.headers.get("content-type") || "text/event-stream; charset=utf-8",
+        "cache-control": res.headers.get("cache-control") || "no-cache",
+        connection: res.headers.get("connection") || "keep-alive"
+      },
+      body: timeoutAwareBody(res.body, timeout, timeoutMs, timeoutLabel, upstreamUrl),
+      cancelTimeout: timeout.cancel
+    };
+  }
+
+  let data;
+  try {
+    data = await res.json();
+  } catch (error) {
+    timeout.cancel();
+    if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
+    data = {};
+  }
+  timeout.cancel();
+  if (!res.ok) throw upstreamError(data.error?.message || `Upstream request failed: ${res.status}`, {
+    upstreamStatus: res.status,
+    upstreamUrl,
+    upstreamBody: preview(data),
+    retryAfterMs: retryAfterMs(res)
+  });
+  return { stream: false, status: res.status, body: data };
+}
+
 async function* timeoutAwareBody(body, timeout, timeoutMs, timeoutLabel, upstreamUrl) {
   try {
     for await (const chunk of body) yield chunk;
@@ -104,7 +199,7 @@ async function callJsonEndpoint(channel, endpointPath, modelId, body, options = 
   const timeout = requestTimer(timeoutMs);
   let res;
   try {
-    res = await fetch(upstreamUrl, {
+    res = await outboundFetch(upstreamUrl, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${channel.apiKey}` },
       body: JSON.stringify(upstreamBody),
@@ -171,7 +266,7 @@ async function callRawEndpoint(channel, endpointPath, rawBody, req, options = {}
   const timeout = requestTimer(timeoutMs);
   let res;
   try {
-    res = await fetch(upstreamUrl, {
+    res = await outboundFetch(upstreamUrl, {
       method: "POST",
       headers: proxyHeaders(req, { authorization: `Bearer ${channel.apiKey}` }),
       body: rawBody,

@@ -2,6 +2,8 @@ const crypto = require("crypto");
 const { state } = require("./state");
 const { normalizeBase, preview, upstreamError } = require("./utils");
 const { publicCircuit } = require("./circuit");
+const { fetchCodexModels, isCodexOAuthChannel, parseIdToken } = require("./codex-oauth");
+const { outboundFetch } = require("./outbound-proxy");
 
 function openaiUrl(base, suffix) {
   const clean = normalizeBase(base);
@@ -47,8 +49,44 @@ function calculateCacheStats(records = []) {
   };
 }
 
+function publicQuotaWindow(window) {
+  if (!window || typeof window !== "object") return null;
+  const usedPercent = Number(window.usedPercent);
+  const windowMinutes = Number(window.windowMinutes);
+  const resetAt = typeof window.resetAt === "string" && Number.isFinite(Date.parse(window.resetAt))
+    ? new Date(window.resetAt).toISOString()
+    : null;
+  if (!Number.isFinite(usedPercent) && !Number.isFinite(windowMinutes) && !resetAt) return null;
+  return {
+    ...(Number.isFinite(usedPercent) ? { usedPercent: Math.max(0, Math.min(100, usedPercent)) } : {}),
+    ...(Number.isFinite(windowMinutes) && windowMinutes > 0 ? { windowMinutes } : {}),
+    ...(resetAt ? { resetAt } : {})
+  };
+}
+
+function publicCodexQuota(quota) {
+  if (!quota || typeof quota !== "object") return null;
+  const primary = publicQuotaWindow(quota.primary);
+  const secondary = publicQuotaWindow(quota.secondary);
+  const fetchedAt = typeof quota.fetchedAt === "string" && Number.isFinite(Date.parse(quota.fetchedAt))
+    ? new Date(quota.fetchedAt).toISOString()
+    : null;
+  if (!primary && !secondary && !fetchedAt) return null;
+  return {
+    ...(primary ? { primary } : {}),
+    ...(secondary ? { secondary } : {}),
+    ...(fetchedAt ? { fetchedAt } : {})
+  };
+}
+
 function publicChannel(channel, options = {}) {
-  const { apiKey, ...safe } = channel;
+  const { apiKey, codexOAuth, ...safe } = channel;
+  // OAuth channels created before subscription fields were persisted still have
+  // the CPA-compatible values in id_token. Decode only for the safe response;
+  // the token itself is never included in the result.
+  const tokenClaims = isCodexOAuthChannel(channel)
+    ? parseIdToken(codexOAuth?.credentials?.idToken)
+    : {};
   const now = Date.now();
   const bucketMs = 60 * 60 * 1000;
   const currentBucketStart = Math.floor(now / bucketMs) * bucketMs;
@@ -76,6 +114,19 @@ function publicChannel(channel, options = {}) {
   }
   return {
     ...safe,
+    ...(isCodexOAuthChannel(channel) ? {
+      codexOAuth: {
+        email: codexOAuth.email || tokenClaims.email || "",
+        planType: codexOAuth.planType || tokenClaims.planType || "",
+        subscriptionExpiresAt: codexOAuth.subscriptionExpiresAt || tokenClaims.subscriptionExpiresAt || null,
+        subscriptionActiveAt: codexOAuth.subscriptionActiveAt || tokenClaims.subscriptionActiveAt || null,
+        expiresAt: codexOAuth.expiresAt || null,
+        lastRefreshAt: codexOAuth.lastRefreshAt || null,
+        status: codexOAuth.status || "active",
+        quota: publicCodexQuota(codexOAuth.quota),
+        quotaError: codexOAuth.quotaError ? String(codexOAuth.quotaError).slice(0, 500) : null
+      }
+    } : {}),
     stream: channel.stream !== false,
     ...(options.includeKey ? { apiKey } : {}),
     hasKey: Boolean(apiKey),
@@ -106,6 +157,15 @@ function protocolLabel(protocol) {
 }
 
 function sanitizeChannel(input, previous = {}) {
+  if (previous.authType === "codex_oauth") {
+    return {
+      ...previous,
+      note: String(input.note || previous.note || ""),
+      providerLink: String(input.providerLink || previous.providerLink || "https://chatgpt.com"),
+      enabled: input.enabled === undefined ? previous.enabled !== false : Boolean(input.enabled),
+      updatedAt: new Date().toISOString()
+    };
+  }
   const apiBase = normalizeBase(input.apiBase);
   const apiKey = typeof input.apiKey === "string" && input.apiKey ? input.apiKey : previous.apiKey;
   const protocol = ["responses", "chat", "auto"].includes(input.protocol)
@@ -160,7 +220,7 @@ async function probeProtocol(channel, protocol) {
   const suffix = protocol === "chat" ? "/chat/completions" : "/responses";
   const upstreamUrl = openaiUrl(channel.apiBase, suffix);
   try {
-    const res = await fetch(upstreamUrl, {
+    const res = await outboundFetch(upstreamUrl, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${channel.apiKey}` },
       body: JSON.stringify(protocolProbeBody(protocol)),
@@ -236,9 +296,10 @@ async function detectAndUpdateProtocol(channel) {
 }
 
 async function fetchModels(channel) {
+  if (isCodexOAuthChannel(channel)) return fetchCodexModels(channel);
   const url = openaiUrl(channel.apiBase, "/models");
   const headers = { authorization: `Bearer ${channel.apiKey}` };
-  const res = await fetch(url, { headers });
+  const res = await outboundFetch(url, { headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw upstreamError(body.error?.message || `Model fetch failed: ${res.status}`, {
     upstreamStatus: res.status,

@@ -5,7 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "check": "node --check src/server.js && node --check public/app.js",
+    "check": "node --check src/*.js && node --check public/app.js",
     "test": "node --test test/*.test.js"
   },
   "engines": {
@@ -16,6 +16,7 @@
     "lucide-static": "^1.23.0"
   },
   "dependencies": {
-    "js-tiktoken": "^1.0.21"
+    "js-tiktoken": "^1.0.21",
+    "undici": "^6.21.3"
   }
 }

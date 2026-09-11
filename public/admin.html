@@ -189,11 +189,51 @@
             </label>
           </div>
         </div>
+        <div class="settings-group">
+          <h4>出站代理</h4>
+          <div class="settings-grid">
+            <div class="field">
+              <span>使用代理</span>
+              <label class="toggle-wrap" for="outboundProxyEnabled">
+                <input id="outboundProxyEnabled" name="outboundProxyEnabled" type="checkbox">
+                <span class="toggle-track" aria-hidden="true"></span>
+              </label>
+              <p class="field-hint">应用于 Codex OAuth 和所有渠道的上游请求。</p>
+            </div>
+            <label id="outboundProxyUrlField" class="field">
+              <span>代理地址</span>
+              <input name="outboundProxyUrl" type="url" inputmode="url" placeholder="http://127.0.0.1:7890" autocomplete="off">
+              <p class="field-hint">支持 HTTP 或 HTTPS 代理。保存后立即生效。</p>
+            </label>
+          </div>
+        </div>
         <div class="form-actions">
           <button type="button" class="btn ghost" id="settingsCancelBtn">取消</button>
           <button type="submit" class="btn primary">保存配置</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <div id="channelTypeModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="channelTypeTitle">
+    <div class="modal-card channel-type-modal-card">
+      <div class="modal-head">
+        <h3 id="channelTypeTitle">添加渠道</h3>
+        <button id="channelTypeCloseBtn" type="button" class="icon-btn" aria-label="关闭">&#x2715;</button>
+      </div>
+      <p class="channel-type-intro">选择连接方式，之后仍可在渠道内编辑对应设置。</p>
+      <div class="channel-type-options">
+        <button type="button" class="channel-type-option" data-add-channel-type="api">
+          <span class="channel-type-symbol api" aria-hidden="true">API</span>
+          <span class="channel-type-copy"><strong>API 渠道</strong><small>使用 API 地址和密钥连接上游服务</small></span>
+          <span class="channel-type-arrow" aria-hidden="true">→</span>
+        </button>
+        <button type="button" class="channel-type-option" data-add-channel-type="codex">
+          <span class="channel-type-symbol codex" aria-hidden="true">C</span>
+          <span class="channel-type-copy"><strong>Codex OAuth</strong><small>登录 ChatGPT 账号并授权 Codex</small></span>
+          <span class="channel-type-arrow" aria-hidden="true">→</span>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -263,11 +303,16 @@
           <span>渠道官网</span>
           <input name="providerLink">
         </label>
-        <label class="field">
+        <div id="editCodexOAuthInfo" class="oauth-account-info hidden" aria-live="polite">
+          <strong>Codex OAuth 已连接</strong>
+          <span id="editCodexOAuthMeta"></span>
+          <button id="editReauthorizeBtn" type="button" class="btn ghost sm">重新授权</button>
+        </div>
+        <label class="field" data-api-key-field>
           <span>API 地址 <em class="required-tag">必填</em></span>
           <input name="apiBase" required>
         </label>
-        <label class="field">
+        <label class="field" data-api-key-field>
           <span>密钥</span>
           <div class="secret-input-wrap">
             <input name="apiKey" type="password" autocomplete="off">
@@ -281,7 +326,7 @@
             </div>
           </div>
         </label>
-        <label class="field">
+        <label class="field" data-api-key-field>
           <span>渠道协议</span>
           <select name="protocol">
             <option value="auto">自动识别</option>
@@ -293,6 +338,48 @@
         <div class="form-actions">
           <button type="button" class="btn ghost" id="editCancelBtn">取消</button>
           <button type="submit" class="btn primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="codexOAuthModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="codexOAuthTitle">
+    <div class="modal-card oauth-modal-card">
+      <div class="modal-head">
+        <h3 id="codexOAuthTitle">连接 Codex</h3>
+        <button id="codexOAuthCloseBtn" type="button" class="icon-btn" aria-label="关闭">&#x2715;</button>
+      </div>
+      <form id="codexOAuthForm" class="form-stack">
+        <div id="codexOAuthStart">
+          <label class="field">
+            <span>渠道名称 <small>可选</small></span>
+            <input name="note" placeholder="例如：我的 Codex 账号">
+          </label>
+          <p class="field-hint">将生成一个 Codex 专用 Responses 渠道。OAuth 凭据会保存在本机数据文件中。</p>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" id="codexOAuthCancelBtn">取消</button>
+            <button type="submit" class="btn primary">生成授权链接</button>
+          </div>
+        </div>
+        <div id="codexOAuthPending" class="oauth-pending hidden" aria-live="polite">
+          <p>在任意浏览器完成 Codex 登录。成功后会回跳到 <code>localhost:1455</code>，系统会自动完成授权；未自动完成时，再粘贴回调链接。</p>
+          <label class="field oauth-authorization-field">
+            <span>授权链接</span>
+            <textarea id="codexOAuthAuthorizationUrl" rows="4" readonly spellcheck="false"></textarea>
+          </label>
+          <div class="oauth-link-actions">
+            <a id="codexOAuthLink" class="btn primary" target="_blank" rel="noreferrer">打开授权链接</a>
+            <button id="codexOAuthCopyLinkBtn" type="button" class="btn ghost"><img class="btn-icon" src="/assets/icons/copy.svg" alt="" aria-hidden="true">复制链接</button>
+          </div>
+          <label class="field oauth-callback-field">
+            <span>手动输入回调链接 <small>自动完成时无需填写</small></span>
+            <textarea id="codexOAuthCallbackUrl" rows="3" placeholder="http://localhost:1455/auth/callback?code=…&state=…" spellcheck="false"></textarea>
+          </label>
+          <button id="codexOAuthSubmitCallbackBtn" type="button" class="btn primary">完成授权</button>
+          <p id="codexOAuthStatus" class="field-hint">正在监听授权回调；你也可以手动粘贴回调链接。</p>
+          <div class="form-actions">
+            <button type="button" class="btn ghost" id="codexOAuthPendingCancelBtn">取消授权</button>
+          </div>
         </div>
       </form>
     </div>

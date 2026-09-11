@@ -1,4 +1,5 @@
 const { state, saveDb, usageRecord } = require("./state");
+const crypto = require("crypto");
 const { readBody, requireAuth, sendError, sendJson } = require("./http");
 const {
   detectAndUpdateProtocol,
@@ -14,6 +15,18 @@ const { responseOutputText, testChannel } = require("./providers");
 const { clientIp, normalizeUsage } = require("./utils");
 const { validateSettings } = require("./settings");
 const { recordChannelFailure, recordChannelSuccess, resetChannelCircuit } = require("./circuit");
+const {
+  CODEX_UPSTREAM_BASE,
+  cancelCodexAuthorization,
+  completeCodexAuthorization,
+  defaultCodexModels,
+  finalizeCodexAuthorization,
+  getCodexAuthorization,
+  refreshCodexQuota,
+  sessionPublic,
+  startCodexAuthorization,
+  storedOAuthInfo
+} = require("./codex-oauth");
 
 function queueProtocolDetection(channel) {
   if (channel.protocol !== "auto") return;
@@ -33,12 +46,139 @@ function elapsedSeconds(startedAt) {
   return Number(((Date.now() - startedAt) / 1000).toFixed(1));
 }
 
+async function syncCodexModels(channel) {
+  try {
+    const models = await fetchModels(channel);
+    if (models.length) mergeModels(channel, models);
+  } catch (error) {
+    channel.codexOAuth.modelSyncError = error.message || "Codex model fetch failed";
+  }
+}
+
+async function syncCodexQuota(channel) {
+  try {
+    return await refreshCodexQuota(channel);
+  } catch (error) {
+    channel.codexOAuth.quotaError = error.message || "Codex quota fetch failed";
+    channel.updatedAt = new Date().toISOString();
+    return null;
+  }
+}
+
+async function saveCodexOAuthChannel(session) {
+  if (!session || session.status !== "completed") return null;
+  if (session.channelId) return state.db.channels.find(channel => channel.id === session.channelId) || null;
+
+  const target = session.targetChannelId
+    ? state.db.channels.find(channel => channel.id === session.targetChannelId && channel.authType === "codex_oauth")
+    : null;
+  const channelId = target?.id || crypto.randomUUID();
+  const credentials = finalizeCodexAuthorization(session.id, channelId);
+  if (!credentials) return state.db.channels.find(channel => channel.id === channelId) || null;
+
+  const now = new Date().toISOString();
+  if (target) {
+    target.codexOAuth = storedOAuthInfo(credentials, { status: "active", lastRefreshAt: now });
+    target.note = session.note || target.note || `Codex · ${credentials.email}`;
+    target.providerLink = "https://chatgpt.com";
+    target.apiBase = CODEX_UPSTREAM_BASE;
+    target.apiKey = "";
+    target.protocol = "responses";
+    target.updatedAt = now;
+    resetChannelCircuit(target);
+    await syncCodexModels(target);
+    await syncCodexQuota(target);
+    saveDb();
+    return target;
+  }
+
+  const models = defaultCodexModels();
+  const channel = {
+    id: channelId,
+    authType: "codex_oauth",
+    apiBase: CODEX_UPSTREAM_BASE,
+    apiKey: "",
+    protocol: "responses",
+    note: session.note || `Codex · ${credentials.email}`,
+    providerLink: "https://chatgpt.com",
+    enabled: true,
+    models,
+    testModelId: models[0]?.id || "",
+    codexOAuth: storedOAuthInfo(credentials, { status: "active", lastRefreshAt: now }),
+    createdAt: now,
+    updatedAt: now
+  };
+  state.db.channels.unshift(channel);
+  await syncCodexModels(channel);
+  await syncCodexQuota(channel);
+  saveDb();
+  return channel;
+}
+
+async function codexOAuthStatusPayload(id) {
+  const session = getCodexAuthorization(id);
+  if (!session) return null;
+  const channel = await saveCodexOAuthChannel(session);
+  const latest = getCodexAuthorization(id) || session;
+  return {
+    ...sessionPublic(latest),
+    ...(channel ? { channel: publicChannel(channel) } : {})
+  };
+}
+
+async function completeCodexOAuthCallback(sessionId, redirectUrl) {
+  await completeCodexAuthorization(sessionId, redirectUrl);
+  return codexOAuthStatusPayload(sessionId);
+}
+
 async function api(req, res, url) {
   if (req.method === "POST" && url.pathname === "/api/login") {
     const body = await readBody(req);
     return sendJson(res, body.apiKey === state.apiKey ? 200 : 401, { ok: body.apiKey === state.apiKey });
   }
   if (!requireAuth(req, res)) return;
+
+  if (req.method === "POST" && url.pathname === "/api/oauth/codex/start") {
+    try {
+      const body = await readBody(req);
+      const targetChannelId = typeof body.channelId === "string" ? body.channelId.trim() : "";
+      if (targetChannelId) {
+        const channel = state.db.channels.find(item => item.id === targetChannelId);
+        if (!channel || channel.authType !== "codex_oauth") return sendError(res, 404, "Codex OAuth channel not found");
+      }
+      const session = startCodexAuthorization({
+        note: typeof body.note === "string" ? body.note.trim() : "",
+        targetChannelId
+      });
+      return sendJson(res, 201, session);
+    } catch (error) {
+      return sendError(res, error.statusCode || 502, error.message || "Failed to start Codex OAuth");
+    }
+  }
+
+  const oauthMatch = url.pathname.match(/^\/api\/oauth\/codex\/([^/]+)(?:\/(callback|cancel))?$/);
+  if (oauthMatch) {
+    const sessionId = oauthMatch[1];
+    const action = oauthMatch[2];
+    if (req.method === "POST" && action === "callback") {
+      try {
+        const body = await readBody(req);
+        const payload = await completeCodexOAuthCallback(sessionId, body.redirectUrl);
+        return sendJson(res, 200, payload);
+      } catch (error) {
+        return sendError(res, error.statusCode || 502, error.message || "Failed to complete Codex OAuth");
+      }
+    }
+    if (req.method === "POST" && action === "cancel") {
+      if (!cancelCodexAuthorization(sessionId)) return sendError(res, 404, "Codex OAuth session not found");
+      return sendJson(res, 200, await codexOAuthStatusPayload(sessionId));
+    }
+    if (req.method === "GET" && !action) {
+      const payload = await codexOAuthStatusPayload(sessionId);
+      if (!payload) return sendError(res, 404, "Codex OAuth session not found");
+      return sendJson(res, 200, payload);
+    }
+  }
 
   if (req.method === "GET" && url.pathname === "/api/settings") {
     return sendJson(res, 200, state.db.settings);
@@ -85,7 +225,7 @@ async function api(req, res, url) {
     saveDb();
     return sendJson(res, 201, publicChannel(channel));
   }
-  const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)(?:\/(models|fetch-models|test|test-model|enabled|circuit-reset))?$/);
+  const channelMatch = url.pathname.match(/^\/api\/channels\/([^/]+)(?:\/(models|fetch-models|quota|test|test-model|enabled|circuit-reset))?$/);
   if (channelMatch) {
     const channel = state.db.channels.find(item => item.id === channelMatch[1]);
     if (!channel) return sendError(res, 404, "Channel not found");
@@ -114,6 +254,24 @@ async function api(req, res, url) {
         saveDb();
         return sendJson(res, 200, publicChannel(channel));
       } catch (error) {
+        return sendJson(res, 200, {
+          ok: false,
+          message: error.message,
+          upstreamStatus: error.upstreamStatus || null,
+          upstreamBody: error.upstreamBody || null
+        });
+      }
+    }
+    if (req.method === "POST" && action === "quota") {
+      if (channel.authType !== "codex_oauth") return sendError(res, 400, "Quota refresh is only available for Codex OAuth channels");
+      try {
+        await refreshCodexQuota(channel);
+        saveDb();
+        return sendJson(res, 200, publicChannel(channel));
+      } catch (error) {
+        channel.codexOAuth.quotaError = error.message || "Codex quota fetch failed";
+        channel.updatedAt = new Date().toISOString();
+        saveDb();
         return sendJson(res, 200, {
           ok: false,
           message: error.message,
@@ -267,5 +425,6 @@ async function api(req, res, url) {
 }
 
 module.exports = {
-  api
+  api,
+  completeCodexOAuthCallback
 };

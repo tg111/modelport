@@ -28,13 +28,28 @@ const clearChannelFiltersBtn = document.querySelector("#clearChannelFilters");
 const addModal = document.querySelector("#addModal");
 const addForm = document.querySelector("#channelForm");
 const addTitle = document.querySelector("#addTitle");
+const channelTypeModal = document.querySelector("#channelTypeModal");
 const editModal = document.querySelector("#editModal");
 const editForm = document.querySelector("#editForm");
+const editCodexOAuthInfo = document.querySelector("#editCodexOAuthInfo");
+const editCodexOAuthMeta = document.querySelector("#editCodexOAuthMeta");
+const codexOAuthModal = document.querySelector("#codexOAuthModal");
+const codexOAuthForm = document.querySelector("#codexOAuthForm");
+const codexOAuthStart = document.querySelector("#codexOAuthStart");
+const codexOAuthPending = document.querySelector("#codexOAuthPending");
+const codexOAuthLink = document.querySelector("#codexOAuthLink");
+const codexOAuthAuthorizationUrl = document.querySelector("#codexOAuthAuthorizationUrl");
+const codexOAuthCopyLinkBtn = document.querySelector("#codexOAuthCopyLinkBtn");
+const codexOAuthCallbackUrl = document.querySelector("#codexOAuthCallbackUrl");
+const codexOAuthSubmitCallbackBtn = document.querySelector("#codexOAuthSubmitCallbackBtn");
+const codexOAuthStatus = document.querySelector("#codexOAuthStatus");
 const errorModal = document.querySelector("#errorModal");
 const errorDetailText = document.querySelector("#errorDetailText");
 const errorTooltip = document.querySelector("#errorTooltip");
 const settingsModal = document.querySelector("#settingsModal");
 const settingsForm = document.querySelector("#settingsForm");
+const outboundProxyEnabled = document.querySelector("#outboundProxyEnabled");
+const outboundProxyUrlField = document.querySelector("#outboundProxyUrlField");
 
 let apiKey = localStorage.getItem(tokenKey) || "";
 let channels = [];
@@ -48,6 +63,8 @@ let usageTotalPages = 1;
 let usageIpVisible = false;
 let errorModalTrigger = null;
 let settings = null;
+let codexOAuthSessionId = null;
+let codexOAuthStatusPoll = null;
 
 function bindProtocolAutoHint(formEl) {
   const select = formEl.querySelector("select[name='protocol']");
@@ -173,8 +190,18 @@ function closeSettingsModal() {
 
 function fillSettingsForm(value) {
   for (const [key, setting] of Object.entries(value || {})) {
-    if (settingsForm.elements[key]) settingsForm.elements[key].value = setting;
+    const field = settingsForm.elements[key];
+    if (!field) continue;
+    if (field.type === "checkbox") field.checked = setting === true;
+    else field.value = setting;
   }
+  syncOutboundProxyFields();
+}
+
+function syncOutboundProxyFields() {
+  const enabled = outboundProxyEnabled.checked;
+  outboundProxyUrlField.classList.toggle("hidden", !enabled);
+  settingsForm.elements.outboundProxyUrl.disabled = !enabled;
 }
 
 document.querySelector("#settingsBtn").addEventListener("click", async () => {
@@ -192,10 +219,20 @@ document.querySelector("#settingsCancelBtn").addEventListener("click", closeSett
 settingsModal.addEventListener("click", event => {
   if (event.target === settingsModal) closeSettingsModal();
 });
+outboundProxyEnabled.addEventListener("change", syncOutboundProxyFields);
 settingsForm.addEventListener("submit", async event => {
   event.preventDefault();
   const submitBtn = settingsForm.querySelector("button[type='submit']");
-  const payload = Object.fromEntries([...new FormData(settingsForm)].map(([key, value]) => [key, Number(value)]));
+  const numericSettings = [
+    "textTimeoutSeconds",
+    "imageTimeoutSeconds",
+    "circuitFailureThreshold",
+    "circuitCooldownSeconds",
+    "authFailureCooldownSeconds"
+  ];
+  const payload = Object.fromEntries(numericSettings.map(key => [key, Number(settingsForm.elements[key].value)]));
+  payload.outboundProxyEnabled = outboundProxyEnabled.checked;
+  payload.outboundProxyUrl = settingsForm.elements.outboundProxyUrl.value.trim();
   submitBtn.disabled = true;
   try {
     settings = await request("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
@@ -225,7 +262,27 @@ function openAddModal(channel = null) {
   addForm.elements.note.focus();
 }
 
-document.querySelector("#addChannelBtn").addEventListener("click", () => openAddModal());
+function openChannelTypeModal() {
+  channelTypeModal.classList.remove("hidden");
+  channelTypeModal.querySelector("[data-add-channel-type]").focus();
+}
+
+function closeChannelTypeModal() {
+  channelTypeModal.classList.add("hidden");
+}
+
+document.querySelector("#addChannelBtn").addEventListener("click", openChannelTypeModal);
+document.querySelector("#channelTypeCloseBtn").addEventListener("click", closeChannelTypeModal);
+channelTypeModal.addEventListener("click", event => {
+  if (event.target === channelTypeModal) closeChannelTypeModal();
+});
+channelTypeModal.querySelectorAll("[data-add-channel-type]").forEach(button => {
+  button.addEventListener("click", () => {
+    closeChannelTypeModal();
+    if (button.dataset.addChannelType === "codex") openCodexOAuthModal();
+    else openAddModal();
+  });
+});
 
 function closeAddModal() {
   addModal.classList.add("hidden");
@@ -265,6 +322,134 @@ document.querySelector("#channelForm").addEventListener("submit", async event =>
   } finally {
     submitBtn.disabled = false;
   }
+});
+
+// ─── Codex OAuth Modal ─────────────────────────────────
+
+function resetCodexOAuthModal() {
+  stopCodexOAuthStatusPolling();
+  codexOAuthSessionId = null;
+  codexOAuthForm.reset();
+  codexOAuthForm.dataset.targetChannelId = "";
+  codexOAuthStart.classList.remove("hidden");
+  codexOAuthPending.classList.add("hidden");
+  codexOAuthLink.removeAttribute("href");
+  codexOAuthAuthorizationUrl.value = "";
+  codexOAuthStatus.textContent = "正在监听授权回调；你也可以手动粘贴回调链接。";
+}
+
+function openCodexOAuthModal(channel = null) {
+  resetCodexOAuthModal();
+  const reauthorize = channel?.authType === "codex_oauth";
+  document.querySelector("#codexOAuthTitle").textContent = reauthorize ? "重新授权 Codex" : "连接 Codex";
+  codexOAuthForm.dataset.targetChannelId = reauthorize ? channel.id : "";
+  codexOAuthForm.elements.note.value = channel?.note || "";
+  codexOAuthModal.classList.remove("hidden");
+  codexOAuthForm.elements.note.focus();
+}
+
+async function closeCodexOAuthModal(cancelPending = true) {
+  const sessionId = codexOAuthSessionId;
+  codexOAuthModal.classList.add("hidden");
+  resetCodexOAuthModal();
+  if (cancelPending && sessionId) {
+    try {
+      await request(`/api/oauth/codex/${encodeURIComponent(sessionId)}/cancel`, { method: "POST" });
+    } catch {}
+  }
+}
+
+function stopCodexOAuthStatusPolling() {
+  if (codexOAuthStatusPoll) clearInterval(codexOAuthStatusPoll);
+  codexOAuthStatusPoll = null;
+}
+
+async function finishCodexOAuthInUi(payload) {
+  if (!payload?.channel) return false;
+  stopCodexOAuthStatusPolling();
+  codexOAuthStatus.textContent = "授权成功，渠道已创建。";
+  await loadChannels();
+  showToast("Codex OAuth 渠道已连接", "success");
+  setTimeout(() => { void closeCodexOAuthModal(false); }, 500);
+  return true;
+}
+
+function startCodexOAuthStatusPolling() {
+  stopCodexOAuthStatusPolling();
+  const poll = async () => {
+    if (!codexOAuthSessionId) return;
+    try {
+      const payload = await request(`/api/oauth/codex/${encodeURIComponent(codexOAuthSessionId)}`);
+      if (await finishCodexOAuthInUi(payload)) return;
+      if (["failed", "expired", "cancelled"].includes(payload.status)) {
+        stopCodexOAuthStatusPolling();
+        codexOAuthStatus.textContent = payload.error || "授权未完成，请重新开始。";
+      }
+    } catch {
+      // The manual callback route remains available if the status request is interrupted.
+    }
+  };
+  void poll();
+  codexOAuthStatusPoll = setInterval(() => { void poll(); }, 1500);
+}
+
+codexOAuthForm.addEventListener("submit", async event => {
+  event.preventDefault();
+  const submitBtn = codexOAuthForm.querySelector("button[type='submit']");
+  submitBtn.disabled = true;
+  try {
+    const session = await request("/api/oauth/codex/start", {
+      method: "POST",
+      body: JSON.stringify({
+        note: codexOAuthForm.elements.note.value.trim(),
+        channelId: codexOAuthForm.dataset.targetChannelId || ""
+      })
+    });
+    codexOAuthSessionId = session.id;
+    codexOAuthLink.href = session.authorizationUrl;
+    codexOAuthAuthorizationUrl.value = session.authorizationUrl;
+    codexOAuthStart.classList.add("hidden");
+    codexOAuthPending.classList.remove("hidden");
+    codexOAuthStatus.textContent = "正在监听 localhost:1455 的授权回调；未自动完成时可手动粘贴。";
+    startCodexOAuthStatusPolling();
+  } catch (error) {
+    showToast(`无法开始 Codex 授权：${error.message}`, "error");
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+codexOAuthCopyLinkBtn.addEventListener("click", async () => {
+  try {
+    const copied = await copyText(codexOAuthAuthorizationUrl.value);
+    showToast(copied ? "授权链接已复制" : "没有可复制的授权链接", copied ? "success" : "error");
+  } catch (error) {
+    showToast(`复制失败：${error.message}`, "error");
+  }
+});
+
+codexOAuthSubmitCallbackBtn.addEventListener("click", async () => {
+  if (!codexOAuthSessionId) return;
+  codexOAuthSubmitCallbackBtn.disabled = true;
+  codexOAuthStatus.textContent = "正在验证并完成授权…";
+  try {
+    const payload = await request(`/api/oauth/codex/${encodeURIComponent(codexOAuthSessionId)}/callback`, {
+      method: "POST",
+      body: JSON.stringify({ redirectUrl: codexOAuthCallbackUrl.value.trim() })
+    });
+    await finishCodexOAuthInUi(payload);
+  } catch (error) {
+    codexOAuthStatus.textContent = `无法完成授权：${error.message}`;
+  } finally {
+    codexOAuthSubmitCallbackBtn.disabled = false;
+  }
+});
+
+document.querySelector("#codexOAuthCloseBtn").addEventListener("click", () => { void closeCodexOAuthModal(); });
+document.querySelector("#codexOAuthCancelBtn").addEventListener("click", () => { void closeCodexOAuthModal(); });
+document.querySelector("#codexOAuthPendingCancelBtn").addEventListener("click", () => { void closeCodexOAuthModal(); });
+codexOAuthModal.addEventListener("click", event => {
+  if (event.target === codexOAuthModal) void closeCodexOAuthModal();
 });
 
 // ─── Edit Channel Modal ────────────────────────────────
@@ -337,7 +522,13 @@ editForm.addEventListener("submit", async event => {
   const payload = formPayload(formEl);
   const id = payload.id;
   delete payload.id;
-  if (!payload.apiKey) delete payload.apiKey;
+  if (formEl.dataset.authType === "codex_oauth") {
+    delete payload.apiBase;
+    delete payload.apiKey;
+    delete payload.protocol;
+  } else if (!payload.apiKey) {
+    delete payload.apiKey;
+  }
   submitBtn.disabled = true;
   try {
     const channel = await request(`/api/channels/${id}`, { method: "PUT", body: JSON.stringify(payload) });
@@ -355,8 +546,10 @@ editForm.addEventListener("submit", async event => {
 
 document.addEventListener("keydown", event => {
   if (event.key === "Escape") {
+    if (!channelTypeModal.classList.contains("hidden")) closeChannelTypeModal();
     if (!editModal.classList.contains("hidden")) closeEditModal();
     if (!addModal.classList.contains("hidden")) closeAddModal();
+    if (!codexOAuthModal.classList.contains("hidden")) void closeCodexOAuthModal();
     if (!errorModal.classList.contains("hidden")) closeErrorModal();
     if (!settingsModal.classList.contains("hidden")) closeSettingsModal();
   }
@@ -497,7 +690,6 @@ document.addEventListener("click", event => {
   proxyModelFilterPanel.classList.add("hidden");
   proxyModelFilterBtn.classList.remove("open");
 });
-
 // ─── Load Data ─────────────────────────────────────────
 
 async function loadAll() {
@@ -584,6 +776,85 @@ function formatCacheRate(value) {
   if (value === null || value === undefined) return "--";
   const rate = Number(value);
   return Number.isFinite(rate) ? `${rate.toFixed(2).replace(/\.00$/, "")}%` : "--";
+}
+
+function formatOAuthDate(value, unknown = "未知") {
+  const time = Date.parse(value || "");
+  return Number.isFinite(time) ? new Date(time).toLocaleString() : unknown;
+}
+
+function formatOAuthShortDate(value, unknown = "未提供") {
+  const time = Date.parse(value || "");
+  if (!Number.isFinite(time)) return unknown;
+  const date = new Date(time);
+  const pad = number => String(number).padStart(2, "0");
+  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function formatOAuthRelativeTime(value) {
+  const time = Date.parse(value || "");
+  if (!Number.isFinite(time)) return "";
+  const difference = time - Date.now();
+  if (difference <= 0) return "已到期";
+  const hours = Math.ceil(difference / (60 * 60 * 1000));
+  if (hours < 24) return `${hours} 小时后`;
+  return `${Math.ceil(hours / 24)} 天后`;
+}
+
+function formatPlanType(value) {
+  const plan = String(value || "").trim();
+  if (!plan) return "未知";
+  return plan.replace(/(^|[\s_-])(\p{L})/gu, (_, prefix, character) => `${prefix}${character.toUpperCase()}`);
+}
+
+function quotaCardHtml(label, window) {
+  const used = Number(window?.usedPercent);
+  const hasUsage = Number.isFinite(used);
+  const clampedUsage = hasUsage ? Math.max(0, Math.min(100, used)) : 0;
+  const remaining = hasUsage ? `${Math.round((100 - clampedUsage) * 10) / 10}% 剩余` : "额度未知";
+  const resetAt = formatOAuthShortDate(window?.resetAt, "待获取");
+  return `
+    <article class="oauth-quota-card">
+      <div class="oauth-quota-card-head">
+        <span>${escapeHtml(label)}</span>
+        <strong>${remaining}</strong>
+      </div>
+      <span class="oauth-quota-bar" aria-label="${escapeAttr(label)}${hasUsage ? `，已用 ${clampedUsage}%` : ""}"><span style="width:${clampedUsage}%"></span></span>
+      <p><span>重置时间</span><time>${escapeHtml(resetAt)}</time></p>
+    </article>
+  `;
+}
+
+function codexQuotaHtml(oauth) {
+  const quota = oauth.quota || {};
+  const fetchedAt = formatOAuthDate(quota.fetchedAt, "尚未读取");
+  const subscriptionExpiry = formatOAuthShortDate(oauth.subscriptionExpiresAt);
+  const subscriptionRelative = formatOAuthRelativeTime(oauth.subscriptionExpiresAt);
+  const planType = formatPlanType(oauth.planType || quota.planType);
+  return `
+    <section class="oauth-quota-panel hidden" aria-label="Codex 额度">
+      <div class="oauth-quota-panel-head">
+        <div>
+          <strong>Codex 额度</strong>
+          <span>更新于 ${escapeHtml(fetchedAt)}</span>
+        </div>
+        <button type="button" class="btn ghost sm" data-action="refresh-quota"><img class="btn-icon" src="/assets/icons/refresh-cw.svg" alt="" aria-hidden="true">刷新额度</button>
+      </div>
+      <div class="oauth-quota-cards">
+        ${quotaCardHtml("5 小时额度", quota.primary)}
+        ${quotaCardHtml("周额度", quota.secondary)}
+        <article class="oauth-quota-card oauth-subscription-card">
+          <div class="oauth-quota-card-head">
+            <span>套餐</span>
+            <strong>${escapeHtml(planType)}</strong>
+          </div>
+          <p><span>续期时间</span><time>${escapeHtml(subscriptionExpiry)}</time></p>
+          ${subscriptionRelative ? `<em>${escapeHtml(subscriptionRelative)}</em>` : ""}
+        </article>
+      </div>
+      ${oauth.quotaError ? `<p class="oauth-quota-error">读取额度失败：${escapeHtml(oauth.quotaError)}</p>` : ""}
+    </section>
+  `;
 }
 
 function renderUsageCacheStats(cacheStats) {
@@ -740,6 +1011,8 @@ function renderChannels() {
   }
 
   channelsEl.innerHTML = visibleChannels.map(channel => {
+    const isCodexOAuth = channel.authType === "codex_oauth";
+    const oauth = channel.codexOAuth || {};
     const enabledModels = (channel.models || []).filter(m => m.enabled);
     const modelChips = enabledModels.slice(0, 6).map(m =>
       `<span class="model-chip">${escapeHtml(m.alias || m.id)}</span>`
@@ -760,6 +1033,12 @@ function renderChannels() {
     const protocolLabel = channel.protocol === "chat"
       ? "Chat Completions"
       : channel.protocol === "auto" ? "自动识别" : "Responses";
+    const oauthExpiry = oauth.expiresAt && !Number.isNaN(Date.parse(oauth.expiresAt))
+      ? new Date(oauth.expiresAt).toLocaleString()
+      : "有效期未知";
+    const oauthMeta = isCodexOAuth
+      ? `<span class="provider-url">Codex OAuth${oauth.email ? ` · ${escapeHtml(oauth.email)}` : ""} · ${escapeHtml(oauth.status === "reauthorization_required" ? "需要重新授权" : oauthExpiry)}</span>`
+      : `<span class="provider-url">${escapeHtml(channel.apiBase)}</span>`;
     const detection = channel.protocolDetection || {};
     const detectionBadge = detection.status === "detecting"
       ? `<span class="badge protocol-badge">识别中</span>`
@@ -779,18 +1058,19 @@ function renderChannels() {
       : circuit.consecutiveFailures ? `<div class="circuit-detail">连续失败 ${Number(circuit.consecutiveFailures)} 次</div>` : "";
 
     return `
-      <div class="channel-card" data-id="${channel.id}">
+      <div class="channel-card ${isCodexOAuth ? "channel-card-codex" : "channel-card-api"}" data-id="${channel.id}">
         <div class="provider-row">
           <div class="provider-main">
             <div class="provider-title-line">
               <span class="status-led ${isEnabled ? "on" : "off"}"></span>
               <span class="card-name">${escapeHtml(channel.note || channel.apiBase)}</span>
               <span class="badge protocol-badge">${protocolLabel}</span>
+              ${isCodexOAuth ? `<span class="badge protocol-badge">Codex OAuth</span>` : ""}
               ${detectionBadge}
               ${circuitBadge}
             </div>
             <div class="provider-meta">
-              <span class="provider-url">${escapeHtml(channel.apiBase)}</span>
+              ${oauthMeta}
               ${channel.providerLink ? `<a href="${escapeAttr(channel.providerLink)}" target="_blank" rel="noreferrer">渠道官网</a>` : ""}
             </div>
             <div class="model-chips">${modelChips}${moreChip}${noModels}</div>
@@ -801,11 +1081,12 @@ function renderChannels() {
                 <span class="toggle-label">${isEnabled ? "启用" : "停用"}</span>
               </label>
               <button type="button" class="btn ghost sm" data-action="edit"><img class="btn-icon" src="/assets/icons/pencil.svg" alt="" aria-hidden="true">编辑</button>
-              <button type="button" class="btn ghost sm" data-action="duplicate"><img class="btn-icon" src="/assets/icons/copy.svg" alt="" aria-hidden="true">复制渠道</button>
+              ${isCodexOAuth ? `<button type="button" class="btn ghost sm" data-action="fetch"><img class="btn-icon" src="/assets/icons/refresh-cw.svg" alt="" aria-hidden="true">获取模型</button>` : `<button type="button" class="btn ghost sm" data-action="duplicate"><img class="btn-icon" src="/assets/icons/copy.svg" alt="" aria-hidden="true">复制渠道</button>`}
               <button type="button" class="btn ghost sm" data-action="test"><img class="btn-icon" src="/assets/icons/flask-conical.svg" alt="" aria-hidden="true">测试</button>
-              <button type="button" class="btn ghost sm" data-action="fetch"><img class="btn-icon" src="/assets/icons/refresh-cw.svg" alt="" aria-hidden="true">获取模型</button>
+              ${isCodexOAuth ? "" : `<button type="button" class="btn ghost sm" data-action="fetch"><img class="btn-icon" src="/assets/icons/refresh-cw.svg" alt="" aria-hidden="true">获取模型</button>`}
               ${circuitOpen || circuitHalfOpen ? `<button type="button" class="btn ghost sm" data-action="reset-circuit">立即恢复</button>` : ""}
               <button type="button" class="btn ghost sm" data-action="toggle-models"><img class="btn-icon" src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true"><span data-toggle-model-label>展开模型</span></button>
+              ${isCodexOAuth ? `<button type="button" class="btn ghost sm" data-action="toggle-quota"><img class="btn-icon" src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true"><span data-toggle-quota-label>展开额度</span></button>` : ""}
               <button type="button" class="btn danger sm" data-action="delete"><img class="btn-icon" src="/assets/icons/trash-2.svg" alt="" aria-hidden="true">删除</button>
             </div>
           </div>
@@ -826,6 +1107,7 @@ function renderChannels() {
             ${recentBar}
           </div>
         </div>
+        ${isCodexOAuth ? codexQuotaHtml(oauth) : ""}
         <div class="models-section hidden">
           <div class="model-tools">
             <input type="search" class="model-filter-input" data-model-filter placeholder="筛选上游模型 ID 或代理模型名">
@@ -954,6 +1236,11 @@ async function channelAction(id, action, control) {
       await openDuplicateModal(id);
       return;
     }
+    if (action === "reauthorize") {
+      const channel = channels.find(item => item.id === id);
+      if (channel) openCodexOAuthModal(channel);
+      return;
+    }
     if (action === "test") {
       const channel = channels.find(item => item.id === id);
       const model = (channel?.models || []).find(item => item.id === channel?.testModelId)
@@ -981,12 +1268,39 @@ async function channelAction(id, action, control) {
       }
       return;
     }
+    if (action === "refresh-quota") {
+      control.disabled = true;
+      const originalHtml = control.innerHTML;
+      control.innerHTML = "正在刷新…";
+      try {
+        const result = await request(`/api/channels/${id}/quota`, { method: "POST" });
+        if (result.ok === false) {
+          showToast(`获取额度失败：${testFailureText(result)}`, "error");
+        } else {
+          showToast("Codex 额度已更新", "success");
+        }
+        await loadChannels();
+      } finally {
+        control.disabled = false;
+        control.innerHTML = originalHtml;
+      }
+      return;
+    }
     if (action === "toggle-models") {
       const modelsEl = cardEl.querySelector(".models-section");
       const btn = cardEl.querySelector('[data-action="toggle-models"]');
       const willOpen = modelsEl.classList.contains("hidden");
       modelsEl.classList.toggle("hidden", !willOpen);
       btn.querySelector("[data-toggle-model-label]").textContent = willOpen ? "折叠模型" : "展开模型";
+      btn.querySelector(".btn-icon").src = willOpen ? "/assets/icons/chevron-up.svg" : "/assets/icons/chevron-down.svg";
+      return;
+    }
+    if (action === "toggle-quota") {
+      const quotaEl = cardEl.querySelector(".oauth-quota-panel");
+      const btn = cardEl.querySelector('[data-action="toggle-quota"]');
+      const willOpen = quotaEl.classList.contains("hidden");
+      quotaEl.classList.toggle("hidden", !willOpen);
+      btn.querySelector("[data-toggle-quota-label]").textContent = willOpen ? "折叠额度" : "展开额度";
       btn.querySelector(".btn-icon").src = willOpen ? "/assets/icons/chevron-up.svg" : "/assets/icons/chevron-down.svg";
       return;
     }
@@ -1095,6 +1409,7 @@ async function openEditModal(id) {
   editForm.elements.note.value = channel.note || "";
   editForm.elements.providerLink.value = channel.providerLink || "";
   editForm.elements.protocol.value = channel.protocol || "auto";
+  setEditAuthMode(channel);
   bindProtocolAutoHint(editForm);
   editModal.classList.remove("hidden");
   editForm.elements.note.focus();
@@ -1109,13 +1424,42 @@ async function openDuplicateModal(id) {
     showToast(error.message, "error");
     return;
   }
+  if (channel.authType === "codex_oauth") {
+    showToast("Codex OAuth 渠道不支持复制凭据", "error");
+    return;
+  }
   openAddModal(channel);
 }
 
 function closeEditModal() {
   editModal.classList.add("hidden");
   editForm.reset();
+  setEditAuthMode(null);
 }
+
+function setEditAuthMode(channel) {
+  const isCodexOAuth = channel?.authType === "codex_oauth";
+  editForm.dataset.authType = isCodexOAuth ? "codex_oauth" : "api_key";
+  editForm.querySelectorAll("[data-api-key-field]").forEach(field => field.classList.toggle("hidden", isCodexOAuth));
+  editCodexOAuthInfo.classList.toggle("hidden", !isCodexOAuth);
+  editForm.elements.apiBase.required = !isCodexOAuth;
+  if (!isCodexOAuth) {
+    editCodexOAuthMeta.textContent = "";
+    return;
+  }
+  const oauth = channel.codexOAuth || {};
+  const expiry = oauth.expiresAt && !Number.isNaN(Date.parse(oauth.expiresAt))
+    ? `有效至 ${new Date(oauth.expiresAt).toLocaleString()}`
+    : "有效期未知";
+  editCodexOAuthMeta.textContent = [oauth.email, oauth.planType, expiry].filter(Boolean).join(" · ");
+}
+
+document.querySelector("#editReauthorizeBtn").addEventListener("click", () => {
+  const channel = channels.find(item => item.id === editForm.elements.id.value);
+  if (!channel) return;
+  closeEditModal();
+  openCodexOAuthModal(channel);
+});
 
 // ─── Utilities ─────────────────────────────────────────
 

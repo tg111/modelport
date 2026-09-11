@@ -9,7 +9,7 @@ ModelPort 是一个面向 Codex 和 OpenAI 兼容平台的本地 AI API 网关�
 ## 功能
 
 * 使用同一个 API Key 访问管理后台和 Codex 反代接口。
-* 在后台添加 OpenAI-compatible 渠道：渠道名称、渠道官网、API 地址和密钥。
+* 在后台添加 OpenAI-compatible API Key 渠道，或通过浏览器授权链接连接 Codex OAuth 账号。
 * 渠道协议默认自动识别，也可手动选择 `Responses 原生` 或 `Chat Completions 兼容`。
 * 从渠道 API 获取模型列表，选择要启用的上游模型 ID，并设置代理模型名。
 * 请求时按代理模型名匹配渠道，同一代理模型名存在多个渠道时自动轮询。
@@ -65,6 +65,8 @@ PROXY_API_KEY=pwd
 
 默认 API Key 是 `pwd`。如果服务会暴露到本机以外，请务必设置 `PROXY_API_KEY`。
 
+在管理后台的“综合配置”可以启用出站代理并填写 HTTP/HTTPS 代理地址，例如 `http://127.0.0.1:7890`。该设置会应用到 Codex OAuth 以及所有渠道的上游请求，保存后立即生效。
+
 打开管理后台：
 
 ```text
@@ -111,6 +113,14 @@ export MODELPORT_API_KEY="pwd"
 后台中启用的代理模型名会出现在 `/v1/models`。客户端请求某个代理模型名时，本服务会把它映射到渠道里的上游模型 ID。
 
 本服务同时兼容带 `/v1` 和不带 `/v1` 的入口。Codex 的 `base_url` 可以填写 `http://127.0.0.1:8880/v1`，也可以填写 `http://127.0.0.1:8880`。
+
+## Codex OAuth 渠道
+
+在“渠道管理”右上角点击“添加渠道”，选择“Codex OAuth”。输入可选的渠道名称后，页面会展示与 CPA 相同的 Codex PKCE 授权链接，可直接打开或复制到其他浏览器。完成登录后，浏览器会跳转到 `http://localhost:1455/auth/callback`，ModelPort 会监听此本地地址并自动创建专用的 Responses 渠道；若回调没有被监听到，仍可将完整回调链接粘贴回管理后台完成授权。
+
+OAuth 渠道会将授权凭据原样保存在本地 `db.json`，并保存账号邮箱、套餐和有效期；令牌临近到期或上游返回 401/403 时会自动刷新一次。渠道卡片和编辑窗口可发起“重新授权”。OAuth 凭据不会从管理 API 返回，也不会显示在页面上。
+
+OAuth 渠道授权成功后会从 Codex 上游同步该账号的模型列表；也可在渠道的“展开模型”中点击“获取模型”重新同步，并按需启用、禁用或编辑模型别名。同步失败时会保留内置的默认模型列表。它只用于 Responses API；Chat Completions 和图片接口应使用 API Key 渠道。
 
 ## 第三方聊天平台配置
 
@@ -167,6 +177,9 @@ Authorization: Bearer <.env 里的 PROXY_API_KEY>
 * `PUT /api/settings`
 * `GET /api/channels`
 * `POST /api/channels`
+* `POST /api/oauth/codex/start`（开始设备码授权）
+* `GET /api/oauth/codex/:id`（读取授权状态）
+* `POST /api/oauth/codex/:id/cancel`（取消待完成的授权）
 * `POST /api/channels/:id/fetch-models`
 * `POST /api/channels/:id/test`
 * `POST /api/channels/:id/circuit-reset`
