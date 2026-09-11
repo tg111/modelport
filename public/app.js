@@ -256,6 +256,7 @@ function openAddModal(channel = null) {
     addForm.elements.note.value = channel.note ? `${channel.note}（副本）` : "";
     addForm.elements.providerLink.value = channel.providerLink || "";
     addForm.elements.protocol.value = channel.protocol || "auto";
+    addForm.elements.priority.value = channel.priority || 1;
   }
   bindProtocolAutoHint(addForm);
   addModal.classList.remove("hidden");
@@ -344,6 +345,7 @@ function openCodexOAuthModal(channel = null) {
   document.querySelector("#codexOAuthTitle").textContent = reauthorize ? "重新授权 Codex" : "连接 Codex";
   codexOAuthForm.dataset.targetChannelId = reauthorize ? channel.id : "";
   codexOAuthForm.elements.note.value = channel?.note || "";
+  codexOAuthForm.elements.priority.value = channel?.priority || 1;
   codexOAuthModal.classList.remove("hidden");
   codexOAuthForm.elements.note.focus();
 }
@@ -402,7 +404,8 @@ codexOAuthForm.addEventListener("submit", async event => {
       method: "POST",
       body: JSON.stringify({
         note: codexOAuthForm.elements.note.value.trim(),
-        channelId: codexOAuthForm.dataset.targetChannelId || ""
+        channelId: codexOAuthForm.dataset.targetChannelId || "",
+        priority: codexOAuthForm.elements.priority.value
       })
     });
     codexOAuthSessionId = session.id;
@@ -1013,6 +1016,7 @@ function renderChannels() {
   channelsEl.innerHTML = visibleChannels.map(channel => {
     const isCodexOAuth = channel.authType === "codex_oauth";
     const oauth = channel.codexOAuth || {};
+    const priority = Math.min(1000, Math.max(1, Math.trunc(Number(channel.priority) || 1)));
     const enabledModels = (channel.models || []).filter(m => m.enabled);
     const modelChips = enabledModels.slice(0, 6).map(m =>
       `<span class="model-chip">${escapeHtml(m.alias || m.id)}</span>`
@@ -1065,6 +1069,7 @@ function renderChannels() {
               <span class="status-led ${isEnabled ? "on" : "off"}"></span>
               <span class="card-name">${escapeHtml(channel.note || channel.apiBase)}</span>
               <span class="badge protocol-badge">${protocolLabel}</span>
+              <span class="badge priority-badge">优先级 ${priority}</span>
               ${isCodexOAuth ? `<span class="badge protocol-badge">Codex OAuth</span>` : ""}
               ${detectionBadge}
               ${circuitBadge}
@@ -1409,6 +1414,7 @@ async function openEditModal(id) {
   editForm.elements.note.value = channel.note || "";
   editForm.elements.providerLink.value = channel.providerLink || "";
   editForm.elements.protocol.value = channel.protocol || "auto";
+  editForm.elements.priority.value = channel.priority || 1;
   setEditAuthMode(channel);
   bindProtocolAutoHint(editForm);
   editModal.classList.remove("hidden");

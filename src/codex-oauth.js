@@ -6,6 +6,7 @@
 const crypto = require("crypto");
 const { queueDbSave } = require("./state");
 const { outboundFetch } = require("./outbound-proxy");
+const { normalizeChannelPriority } = require("./channel-priority");
 
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_AUTHORIZATION_URL = "https://auth.openai.com/oauth/authorize";
@@ -227,6 +228,7 @@ function startCodexAuthorization(options = {}) {
     channelId: null,
     targetChannelId: String(options.targetChannelId || "").trim() || null,
     note: String(options.note || "").trim(),
+    priority: normalizeChannelPriority(options.priority),
     error: null,
     credentials: null
   };

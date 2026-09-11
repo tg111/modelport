@@ -4,6 +4,7 @@ const { normalizeBase, preview, upstreamError } = require("./utils");
 const { publicCircuit } = require("./circuit");
 const { fetchCodexModels, isCodexOAuthChannel, parseIdToken } = require("./codex-oauth");
 const { outboundFetch } = require("./outbound-proxy");
+const { normalizeChannelPriority } = require("./channel-priority");
 
 function openaiUrl(base, suffix) {
   const clean = normalizeBase(base);
@@ -114,6 +115,7 @@ function publicChannel(channel, options = {}) {
   }
   return {
     ...safe,
+    priority: normalizeChannelPriority(channel.priority),
     ...(isCodexOAuthChannel(channel) ? {
       codexOAuth: {
         email: codexOAuth.email || tokenClaims.email || "",
@@ -162,6 +164,7 @@ function sanitizeChannel(input, previous = {}) {
       ...previous,
       note: String(input.note || previous.note || ""),
       providerLink: String(input.providerLink || previous.providerLink || "https://chatgpt.com"),
+      priority: normalizeChannelPriority(input.priority, previous.priority),
       enabled: input.enabled === undefined ? previous.enabled !== false : Boolean(input.enabled),
       updatedAt: new Date().toISOString()
     };
@@ -178,6 +181,7 @@ function sanitizeChannel(input, previous = {}) {
     protocol,
     note: String(input.note || ""),
     providerLink: String(input.providerLink || ""),
+    priority: normalizeChannelPriority(input.priority, previous.priority),
     enabled: input.enabled === undefined ? previous.enabled !== false : Boolean(input.enabled),
     models: Array.isArray(previous.models) ? previous.models : [],
     testModelId: previous.testModelId || "",
@@ -365,10 +369,26 @@ function aliases() {
 function sortedCandidates(alias) {
   const items = aliases().get(alias) || [];
   if (items.length <= 1) return items;
-  const next = state.rr.get(alias) || 0;
-  const rotated = [...items.slice(next), ...items.slice(0, next)];
-  state.rr.set(alias, (next + 1) % items.length);
-  return rotated;
+  const byPriority = new Map();
+  for (const item of items) {
+    const priority = normalizeChannelPriority(item.channel.priority);
+    if (!byPriority.has(priority)) byPriority.set(priority, []);
+    byPriority.get(priority).push(item);
+  }
+
+  const candidates = [];
+  for (const priority of [...byPriority.keys()].sort((a, b) => b - a)) {
+    const group = byPriority.get(priority);
+    if (group.length === 1) {
+      candidates.push(group[0]);
+      continue;
+    }
+    const key = `${alias}:${priority}`;
+    const next = state.rr.get(key) || 0;
+    candidates.push(...group.slice(next), ...group.slice(0, next));
+    state.rr.set(key, (next + 1) % group.length);
+  }
+  return candidates;
 }
 
 module.exports = {
@@ -376,6 +396,7 @@ module.exports = {
   publicChannel,
   isImageUsageEndpoint,
   calculateCacheStats,
+  normalizeChannelPriority,
   sanitizeChannel,
   detectProtocol,
   detectAndUpdateProtocol,

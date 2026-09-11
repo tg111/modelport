@@ -11,6 +11,7 @@ const {
   sanitizeChannel,
   sanitizeModels
 } = require("./channels");
+const { normalizeChannelPriority } = require("./channel-priority");
 const { responseOutputText, testChannel } = require("./providers");
 const { clientIp, normalizeUsage } = require("./utils");
 const { validateSettings } = require("./settings");
@@ -81,6 +82,7 @@ async function saveCodexOAuthChannel(session) {
     target.codexOAuth = storedOAuthInfo(credentials, { status: "active", lastRefreshAt: now });
     target.note = session.note || target.note || `Codex · ${credentials.email}`;
     target.providerLink = "https://chatgpt.com";
+    target.priority = normalizeChannelPriority(session.priority, target.priority);
     target.apiBase = CODEX_UPSTREAM_BASE;
     target.apiKey = "";
     target.protocol = "responses";
@@ -101,6 +103,7 @@ async function saveCodexOAuthChannel(session) {
     protocol: "responses",
     note: session.note || `Codex · ${credentials.email}`,
     providerLink: "https://chatgpt.com",
+    priority: normalizeChannelPriority(session.priority),
     enabled: true,
     models,
     testModelId: models[0]?.id || "",
@@ -148,7 +151,8 @@ async function api(req, res, url) {
       }
       const session = startCodexAuthorization({
         note: typeof body.note === "string" ? body.note.trim() : "",
-        targetChannelId
+        targetChannelId,
+        priority: normalizeChannelPriority(body.priority)
       });
       return sendJson(res, 201, session);
     } catch (error) {
