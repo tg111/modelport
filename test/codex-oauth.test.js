@@ -1,5 +1,9 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const os = require("node:os");
+const path = require("node:path");
+
+process.env.DATA_DIR = path.join(os.tmpdir(), `modelport-codex-oauth-test-${process.pid}`);
 
 const { state } = require("../src/state");
 const { publicChannel } = require("../src/channels");
@@ -18,9 +22,27 @@ const {
   storedOAuthInfo
 } = require("../src/codex-oauth");
 const { callImageGenerations, callResponses } = require("../src/providers");
+const { proxyResponses } = require("../src/proxy");
 
 function unsignedJwt(claims) {
   return `eyJhbGciOiJub25lIn0.${Buffer.from(JSON.stringify(claims)).toString("base64url")}.`;
+}
+
+function responseCapture() {
+  return {
+    headersSent: false,
+    status: null,
+    headers: null,
+    body: null,
+    writeHead(status, headers) {
+      this.status = status;
+      this.headers = headers;
+      this.headersSent = true;
+    },
+    end(body) {
+      this.body = typeof body === "string" ? body : String(body || "");
+    }
+  };
 }
 
 test("Codex OAuth credentials are stored locally and public metadata excludes tokens", () => {
@@ -344,6 +366,140 @@ test("Codex OAuth model fetch reports the underlying network failure", async () 
   try {
     await assert.rejects(fetchCodexModels(channel), /UND_ERR_CONNECT_TIMEOUT/);
   } finally {
+    global.fetch = previousFetch;
+  }
+});
+
+test("Codex OAuth usage-limit errors retain their reset time", async () => {
+  const channel = {
+    authType: "codex_oauth",
+    codexOAuth: storedOAuthInfo({
+      accessToken: "access-secret",
+      refreshToken: "refresh-secret",
+      idToken: "",
+      email: "owner@example.com",
+      accountId: "account-123",
+      planType: "team",
+      expiresAt: "2030-01-01T00:00:00.000Z"
+    })
+  };
+  const previousFetch = global.fetch;
+  global.fetch = async () => new Response(JSON.stringify({
+    error: {
+      type: "usage_limit_reached",
+      message: "The usage limit has been reached",
+      plan_type: "team",
+      resets_at: 1893456000
+    }
+  }), { status: 429, headers: { "content-type": "application/json" } });
+  try {
+    await assert.rejects(
+      callResponses(channel, "gpt-5.6-sol", { input: "hello" }),
+      error => error.codexUsageLimit?.resetAt === "2030-01-01T00:00:00.000Z"
+        && error.codexUsageLimit?.planType === "team"
+    );
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
+test("Codex OAuth usage exhaustion skips the channel until its reset time", async () => {
+  const previousChannels = state.db.channels;
+  const previousUsage = state.db.usage;
+  const previousFetch = global.fetch;
+  const previousRoundRobin = new Map(state.rr);
+  const credentials = {
+    accessToken: "access-secret",
+    refreshToken: "refresh-secret",
+    idToken: "",
+    email: "owner@example.com",
+    accountId: "account-123",
+    planType: "team",
+    expiresAt: "2030-01-01T00:00:00.000Z"
+  };
+  const oauthChannel = {
+    id: "oauth-high",
+    authType: "codex_oauth",
+    enabled: true,
+    priority: 2,
+    note: "OAuth high",
+    models: [{ id: "gpt-5.6-sol", alias: "shared-model", enabled: true }],
+    codexOAuth: storedOAuthInfo(credentials),
+    circuit: { status: "closed", consecutiveFailures: 0 }
+  };
+  const apiChannel = {
+    id: "api-low",
+    enabled: true,
+    priority: 1,
+    note: "API low",
+    apiBase: "https://api.example.test",
+    apiKey: "api-secret",
+    protocol: "responses",
+    models: [{ id: "fallback-model", alias: "shared-model", enabled: true }],
+    circuit: { status: "closed", consecutiveFailures: 0 }
+  };
+  let oauthCalls = 0;
+  let apiCalls = 0;
+  global.fetch = async url => {
+    if (String(url).startsWith("https://chatgpt.com/backend-api/codex/responses")) {
+      oauthCalls += 1;
+      if (oauthCalls === 1) {
+        return new Response(JSON.stringify({
+          error: {
+            type: "usage_limit_reached",
+            message: "The usage limit has been reached",
+            plan_type: "team",
+            resets_at: Math.floor(Date.now() / 1000) + 3600
+          }
+        }), { status: 429, headers: { "content-type": "application/json" } });
+      }
+      return new Response(JSON.stringify({ id: "oauth-response", output: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    if (String(url).startsWith("https://api.example.test/v1/responses")) {
+      apiCalls += 1;
+      return new Response(JSON.stringify({ id: `api-response-${apiCalls}`, output: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  state.db.channels = [oauthChannel, apiChannel];
+  state.db.usage = [];
+  state.rr.clear();
+  try {
+    const first = responseCapture();
+    await proxyResponses({ url: "/v1/responses", headers: {} }, first, { model: "shared-model", input: "first" });
+    assert.equal(first.status, 200);
+    assert.equal(oauthCalls, 1);
+    assert.equal(apiCalls, 1);
+    assert.equal(oauthChannel.circuit.status, "closed");
+    assert.ok(oauthChannel.codexOAuth.usageLimit?.resetAt);
+
+    apiChannel.enabled = false;
+    const onlyPaused = responseCapture();
+    await proxyResponses({ url: "/v1/responses", headers: {} }, onlyPaused, { model: "shared-model", input: "paused" });
+    const pausedError = JSON.parse(onlyPaused.body).error;
+    assert.equal(onlyPaused.status, 429);
+    assert.equal(pausedError.type, "usage_limit_reached");
+    assert.equal(pausedError.resets_at, Math.floor(Date.parse(oauthChannel.codexOAuth.usageLimit.resetAt) / 1000));
+
+    apiChannel.enabled = true;
+    const whilePaused = responseCapture();
+    await proxyResponses({ url: "/v1/responses", headers: {} }, whilePaused, { model: "shared-model", input: "second" });
+    assert.equal(whilePaused.status, 200);
+    assert.equal(oauthCalls, 1);
+    assert.equal(apiCalls, 2);
+
+    oauthChannel.codexOAuth.usageLimit.resetAt = new Date(Date.now() - 1000).toISOString();
+    const afterReset = responseCapture();
+    await proxyResponses({ url: "/v1/responses", headers: {} }, afterReset, { model: "shared-model", input: "third" });
+    assert.equal(afterReset.status, 200);
+    assert.equal(oauthCalls, 2);
+    assert.equal(apiCalls, 2);
+    assert.equal(oauthChannel.codexOAuth.usageLimit, undefined);
+  } finally {
+    state.db.channels = previousChannels;
+    state.db.usage = previousUsage;
+    state.rr.clear();
+    for (const [key, value] of previousRoundRobin) state.rr.set(key, value);
     global.fetch = previousFetch;
   }
 });

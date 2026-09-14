@@ -1,5 +1,6 @@
 const { beginHealthCheck, deferHealthCheck, recordChannelFailure, recordChannelSuccess } = require("./circuit");
 const { testChannel } = require("./providers");
+const { recordCodexUsageLimit } = require("./codex-oauth");
 const { state } = require("./state");
 
 const HEALTH_CHECK_MESSAGE = "你好";
@@ -15,6 +16,7 @@ async function checkChannel(channel, model) {
     await testChannel(channel, HEALTH_CHECK_MESSAGE, model.id);
     recordChannelSuccess(channel);
   } catch (error) {
+    if (recordCodexUsageLimit(channel, error.codexUsageLimit)) return;
     const counted = recordChannelFailure(channel, error);
     if (!counted) deferHealthCheck(channel, error);
   }

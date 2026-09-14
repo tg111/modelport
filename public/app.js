@@ -834,6 +834,7 @@ function quotaCardHtml(label, window) {
 
 function codexQuotaHtml(oauth, expanded = false) {
   const quota = oauth.quota || {};
+  const usageLimit = oauth.usageLimit;
   const fetchedAt = formatOAuthDate(quota.fetchedAt, "尚未读取");
   const subscriptionExpiry = formatOAuthShortDate(oauth.subscriptionExpiresAt);
   const subscriptionRelative = formatOAuthRelativeTime(oauth.subscriptionExpiresAt);
@@ -859,6 +860,7 @@ function codexQuotaHtml(oauth, expanded = false) {
           ${subscriptionRelative ? `<em>${escapeHtml(subscriptionRelative)}</em>` : ""}
         </article>
       </div>
+      ${usageLimit?.resetAt ? `<p class="oauth-quota-warning">额度已用尽，将于 ${escapeHtml(formatOAuthShortDate(usageLimit.resetAt, "待定"))} 自动恢复</p>` : ""}
       ${oauth.quotaError ? `<p class="oauth-quota-error">读取额度失败：${escapeHtml(oauth.quotaError)}</p>` : ""}
     </section>
   `;
@@ -1044,6 +1046,10 @@ function renderChannels() {
     const oauthExpiry = oauth.expiresAt && !Number.isNaN(Date.parse(oauth.expiresAt))
       ? new Date(oauth.expiresAt).toLocaleString()
       : "有效期未知";
+    const usageLimit = oauth.usageLimit;
+    const quotaPause = usageLimit?.resetAt
+      ? `<span class="oauth-quota-paused">额度暂停至 ${escapeHtml(formatOAuthShortDate(usageLimit.resetAt, "待定"))}</span>`
+      : "";
     const oauthMeta = isCodexOAuth
       ? `<span class="provider-url">Codex OAuth${oauth.email ? ` · ${escapeHtml(oauth.email)}` : ""} · ${escapeHtml(oauth.status === "reauthorization_required" ? "需要重新授权" : oauthExpiry)}</span>`
       : `<span class="provider-url">${escapeHtml(channel.apiBase)}</span>`;
@@ -1083,6 +1089,7 @@ function renderChannels() {
             </div>
             <div class="provider-meta">
               ${oauthMeta}
+              ${quotaPause}
               ${channel.providerLink ? `<a href="${escapeAttr(channel.providerLink)}" target="_blank" rel="noreferrer">渠道官网</a>` : ""}
             </div>
             <div class="model-chips">${modelChips}${moreChip}${noModels}</div>

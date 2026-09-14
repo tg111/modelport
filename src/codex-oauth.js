@@ -128,6 +128,56 @@ function isCodexImageModel(modelId) {
   return CODEX_IMAGE_MODELS.includes(String(modelId || "").trim().toLowerCase());
 }
 
+function codexUsageLimitFromBody(body) {
+  const error = body?.error && typeof body.error === "object" ? body.error : body;
+  if (!error || typeof error !== "object" || error.type !== "usage_limit_reached") return null;
+
+  const resetAt = timestampToIso(firstQuotaValue(error, ["resets_at", "resetsAt", "reset_at", "resetAt"]))
+    || (() => {
+      const seconds = quotaNumber(error, ["resets_in_seconds", "resetsInSeconds", "reset_after_seconds", "resetAfterSeconds"]);
+      return seconds !== null && seconds >= 0 ? new Date(Date.now() + seconds * 1000).toISOString() : null;
+    })();
+  if (!resetAt) return null;
+
+  return {
+    resetAt,
+    ...(typeof error.plan_type === "string" ? { planType: error.plan_type } : {}),
+    ...(typeof error.planType === "string" ? { planType: error.planType } : {})
+  };
+}
+
+function activeCodexUsageLimit(channel, now = Date.now()) {
+  if (!isCodexOAuthChannel(channel)) return null;
+  // This is a time-based availability state, not a circuit-breaker failure.
+  const usageLimit = channel.codexOAuth?.usageLimit;
+  if (!usageLimit || typeof usageLimit !== "object") return null;
+
+  const resetAt = timestampToIso(usageLimit.resetAt);
+  const resetMs = Date.parse(resetAt || "");
+  if (resetAt && Number.isFinite(resetMs) && resetMs > now) return { ...usageLimit, resetAt };
+
+  delete channel.codexOAuth.usageLimit;
+  channel.updatedAt = new Date(now).toISOString();
+  queueDbSave();
+  return null;
+}
+
+function recordCodexUsageLimit(channel, usageLimit) {
+  if (!isCodexOAuthChannel(channel) || !usageLimit?.resetAt) return null;
+  const resetAt = timestampToIso(usageLimit.resetAt);
+  if (!resetAt) return null;
+
+  const now = new Date().toISOString();
+  channel.codexOAuth.usageLimit = {
+    resetAt,
+    detectedAt: now,
+    ...(usageLimit.planType ? { planType: String(usageLimit.planType) } : {})
+  };
+  channel.updatedAt = now;
+  queueDbSave();
+  return channel.codexOAuth.usageLimit;
+}
+
 async function requestJson(url, options = {}) {
   let response;
   try {
@@ -627,6 +677,8 @@ module.exports = {
   cancelCodexAuthorization,
   completeCodexAuthorization,
   defaultCodexModels,
+  activeCodexUsageLimit,
+  codexUsageLimitFromBody,
   fetchCodexQuota,
   fetchCodexModels,
   finalizeCodexAuthorization,
@@ -637,6 +689,7 @@ module.exports = {
   parseIdToken,
   parseCodexQuota,
   publicOAuthInfo,
+  recordCodexUsageLimit,
   requestCodexResponse,
   requestCodexImage,
   refreshCodexQuota,

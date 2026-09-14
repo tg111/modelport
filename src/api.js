@@ -23,6 +23,7 @@ const {
   defaultCodexModels,
   finalizeCodexAuthorization,
   getCodexAuthorization,
+  recordCodexUsageLimit,
   refreshCodexQuota,
   sessionPublic,
   startCodexAuthorization,
@@ -317,7 +318,7 @@ async function api(req, res, url) {
           response: responseOutputText(result.upstream.body)
         });
       } catch (error) {
-        recordChannelFailure(channel, error);
+        if (!recordCodexUsageLimit(channel, error.codexUsageLimit)) recordChannelFailure(channel, error);
         const model = modelId
           ? (channel.models || []).find(item => item.id === modelId) || { id: modelId }
           : (channel.models || []).find(item => item.enabled) || (channel.models || [])[0] || {};

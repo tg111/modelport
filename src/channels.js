@@ -2,7 +2,7 @@ const crypto = require("crypto");
 const { state } = require("./state");
 const { normalizeBase, preview, upstreamError } = require("./utils");
 const { publicCircuit } = require("./circuit");
-const { fetchCodexModels, isCodexOAuthChannel, parseIdToken } = require("./codex-oauth");
+const { activeCodexUsageLimit, fetchCodexModels, isCodexOAuthChannel, parseIdToken } = require("./codex-oauth");
 const { outboundFetch } = require("./outbound-proxy");
 const { normalizeChannelPriority } = require("./channel-priority");
 
@@ -88,6 +88,7 @@ function publicChannel(channel, options = {}) {
   const tokenClaims = isCodexOAuthChannel(channel)
     ? parseIdToken(codexOAuth?.credentials?.idToken)
     : {};
+  const usageLimit = isCodexOAuthChannel(channel) ? activeCodexUsageLimit(channel) : null;
   const now = Date.now();
   const bucketMs = 60 * 60 * 1000;
   const currentBucketStart = Math.floor(now / bucketMs) * bucketMs;
@@ -126,7 +127,12 @@ function publicChannel(channel, options = {}) {
         lastRefreshAt: codexOAuth.lastRefreshAt || null,
         status: codexOAuth.status || "active",
         quota: publicCodexQuota(codexOAuth.quota),
-        quotaError: codexOAuth.quotaError ? String(codexOAuth.quotaError).slice(0, 500) : null
+        quotaError: codexOAuth.quotaError ? String(codexOAuth.quotaError).slice(0, 500) : null,
+        usageLimit: usageLimit ? {
+          resetAt: usageLimit.resetAt,
+          detectedAt: usageLimit.detectedAt || null,
+          planType: usageLimit.planType || null
+        } : null
       }
     } : {}),
     stream: channel.stream !== false,

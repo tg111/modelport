@@ -2,6 +2,7 @@ const { usageRecord } = require("./state");
 const { send, sendError, sendJson } = require("./http");
 const { chatStreamToResponsesStream } = require("./bridge");
 const { sortedCandidates } = require("./channels");
+const { activeCodexUsageLimit, recordCodexUsageLimit } = require("./codex-oauth");
 const { callChatCompletions, callImageEdits, callImageGenerations, callResponses } = require("./providers");
 const {
   beginChannelAttempt,
@@ -34,6 +35,23 @@ function elapsedSecondsBetween(startedAt, finishedAt) {
   return finishedAt === null ? null : Number(((finishedAt - startedAt) / 1000).toFixed(1));
 }
 
+function quotaLimitResponse(res, pauses, errors = []) {
+  const earliest = pauses
+    .map(pause => ({ ...pause, resetMs: Date.parse(pause.resetAt || "") }))
+    .filter(pause => Number.isFinite(pause.resetMs))
+    .sort((left, right) => left.resetMs - right.resetMs)[0];
+  const resetAt = earliest?.resetAt || null;
+  const resetsInSeconds = earliest ? Math.max(0, Math.ceil((earliest.resetMs - Date.now()) / 1000)) : null;
+  return sendError(res, 429, "The Codex OAuth usage limit has been reached", {
+    type: "usage_limit_reached",
+    resetAt,
+    resets_at: earliest ? Math.floor(earliest.resetMs / 1000) : null,
+    resetsInSeconds,
+    plan_type: earliest?.planType || null,
+    errors
+  });
+}
+
 async function proxyResponses(req, res, body) {
   return proxyJsonEndpoint(req, res, body, "responses");
 }
@@ -54,10 +72,17 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
   if (!candidates.length) return sendError(res, 404, `No enabled channel found for proxy model: ${alias}`);
 
   const errors = [];
+  const quotaPauses = [];
+  let hasNonQuotaFailure = false;
   const callEndpoint = jsonEndpointCallers[endpoint];
   const requestId = crypto.randomUUID();
   let attemptNumber = 0;
   for (const { channel, model } of candidates) {
+    const activeUsageLimit = activeCodexUsageLimit(channel);
+    if (activeUsageLimit) {
+      quotaPauses.push(activeUsageLimit);
+      continue;
+    }
     if (!beginChannelAttempt(channel)) continue;
     attemptNumber += 1;
     const startedAt = Date.now();
@@ -130,8 +155,15 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
         channelNote: channel.note
       });
       errors.push(detail);
-      const counted = recordChannelFailure(channel, error);
-      if (!counted) releaseChannelAttempt(channel);
+      const usageLimit = recordCodexUsageLimit(channel, error.codexUsageLimit);
+      if (usageLimit) {
+        quotaPauses.push(usageLimit);
+        releaseChannelAttempt(channel);
+      } else {
+        hasNonQuotaFailure = true;
+        const counted = recordChannelFailure(channel, error);
+        if (!counted) releaseChannelAttempt(channel);
+      }
       usageRecord({ requestId, attempt: attemptNumber, success: false, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, ...detail, error: error.message, ip });
       if (endpoint === "image_generations" && error.isTimeout) {
         return sendError(res, 504, detail.message, {
@@ -143,6 +175,7 @@ async function proxyJsonEndpoint(req, res, body, endpoint) {
     }
   }
 
+  if (quotaPauses.length && !hasNonQuotaFailure) return quotaLimitResponse(res, quotaPauses, errors);
   const firstError = errors[0] || {};
   sendError(res, 502, firstError.message || "All matching channels failed", {
     errors,

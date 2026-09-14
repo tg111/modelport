@@ -799,6 +799,16 @@ a:hover {
   color: #92400e;
 }
 
+.oauth-quota-paused,
+.oauth-quota-warning {
+  color: #92400e;
+}
+
+.oauth-quota-warning {
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+
 .channel-stats {
   display: flex;
   flex-direction: column;

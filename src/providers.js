@@ -4,6 +4,7 @@ const { preview, proxyHeaders, responseOutputText, upstreamError } = require("./
 const { state } = require("./state");
 const {
   CODEX_UPSTREAM_BASE,
+  codexUsageLimitFromBody,
   isCodexOAuthChannel,
   requestCodexImage,
   requestCodexResponse
@@ -99,6 +100,27 @@ function retryAfterMs(res) {
   return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
 }
 
+function codexUpstreamError(res, data, upstreamUrl) {
+  const usageLimit = codexUsageLimitFromBody(data);
+  const resetAt = Date.parse(usageLimit?.resetAt || "");
+  const resetDelay = Number.isFinite(resetAt) ? Math.max(0, resetAt - Date.now()) : 0;
+  return upstreamError(data?.error?.message || `Upstream request failed: ${res.status}`, {
+    upstreamStatus: res.status,
+    upstreamUrl,
+    upstreamBody: preview(data),
+    retryAfterMs: Math.max(retryAfterMs(res), resetDelay),
+    ...(usageLimit ? { codexUsageLimit: usageLimit } : {})
+  });
+}
+
+function parseJsonOrText(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
+
 async function callCodexOAuthResponses(channel, modelId, body) {
   return callCodexOAuthRequest(channel, modelId, body, {
     timeoutMs: state.db.settings.textTimeoutSeconds * 1000,
@@ -139,12 +161,7 @@ async function callCodexOAuthRequest(channel, modelId, body, options) {
         if (timeout.timedOut()) throw timeoutError(timeoutMs, timeoutLabel, upstreamUrl);
       }
       timeout.cancel();
-      throw upstreamError(`Upstream request failed: ${res.status}`, {
-        upstreamStatus: res.status,
-        upstreamUrl,
-        upstreamBody: preview(text),
-        retryAfterMs: retryAfterMs(res)
-      });
+      throw codexUpstreamError(res, parseJsonOrText(text), upstreamUrl);
     }
     return {
       stream: true,
@@ -168,12 +185,7 @@ async function callCodexOAuthRequest(channel, modelId, body, options) {
     data = {};
   }
   timeout.cancel();
-  if (!res.ok) throw upstreamError(data.error?.message || `Upstream request failed: ${res.status}`, {
-    upstreamStatus: res.status,
-    upstreamUrl,
-    upstreamBody: preview(data),
-    retryAfterMs: retryAfterMs(res)
-  });
+  if (!res.ok) throw codexUpstreamError(res, data, upstreamUrl);
   return { stream: false, status: res.status, body: data };
 }
 
