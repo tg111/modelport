@@ -12,6 +12,7 @@ const {
   fetchCodexModels,
   finalizeCodexAuthorization,
   getCodexAuthorization,
+  normalizeCodexResponseRequest,
   parseIdToken,
   startCodexAuthorization,
   storedOAuthInfo
@@ -196,6 +197,26 @@ test("Codex OAuth Responses requests use the stored token and account header", a
     global.fetch = previousFetch;
     state.db.settings.textTimeoutSeconds = previousTimeout;
   }
+});
+
+test("Codex OAuth converts Responses system messages to developer messages", () => {
+  const request = {
+    model: "gpt-5.6-sol",
+    input: [
+      { type: "message", role: "system", content: [{ type: "input_text", text: "OpenClaw instructions" }] },
+      { type: "message", role: "user", content: [{ type: "input_text", text: "Hello" }] },
+      { type: "message", role: "developer", content: [{ type: "input_text", text: "Existing developer message" }] },
+      { type: "function_call", name: "lookup", arguments: "{}" }
+    ]
+  };
+
+  const normalized = normalizeCodexResponseRequest(request);
+
+  assert.equal(normalized.input[0].role, "developer");
+  assert.equal(normalized.input[1].role, "user");
+  assert.equal(normalized.input[2].role, "developer");
+  assert.equal(normalized.input[3].type, "function_call");
+  assert.equal(request.input[0].role, "system");
 });
 
 test("Codex OAuth fetches the account models and adds CPA's built-in image models", async () => {

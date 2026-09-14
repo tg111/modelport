@@ -504,7 +504,7 @@ async function refreshCodexQuota(channel) {
 }
 
 async function requestCodexResponse(channel, modelId, body, signal) {
-  const requestBody = { ...body, model: modelId };
+  const requestBody = normalizeCodexResponseRequest({ ...body, model: modelId });
   let credentials = await channelCredentials(channel);
   let response = await outboundFetch(`${CODEX_UPSTREAM_BASE}/responses`, {
     method: "POST",
@@ -522,6 +522,22 @@ async function requestCodexResponse(channel, modelId, body, signal) {
     });
   }
   return response;
+}
+
+// The Codex Responses upstream rejects `system` messages in `input`.  Keep the
+// caller's content and order intact, but use the supported equivalent role.
+// This matches CLIProxyAPI's OpenAI Responses -> Codex normalization.
+function normalizeCodexResponseRequest(body) {
+  if (!Array.isArray(body?.input)) return body;
+
+  let changed = false;
+  const input = body.input.map(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item) || item.role !== "system") return item;
+    changed = true;
+    return { ...item, role: "developer" };
+  });
+
+  return changed ? { ...body, input } : body;
 }
 
 async function requestCodexImage(channel, modelId, body, signal, action = "generations") {
@@ -561,6 +577,7 @@ module.exports = {
   getCodexAuthorization,
   isCodexImageModel,
   isCodexOAuthChannel,
+  normalizeCodexResponseRequest,
   parseIdToken,
   parseCodexQuota,
   publicOAuthInfo,
