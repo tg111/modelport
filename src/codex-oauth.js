@@ -524,20 +524,76 @@ async function requestCodexResponse(channel, modelId, body, signal) {
   return response;
 }
 
-// The Codex Responses upstream rejects `system` messages in `input`.  Keep the
-// caller's content and order intact, but use the supported equivalent role.
-// This matches CLIProxyAPI's OpenAI Responses -> Codex normalization.
+// Normalize an OpenAI Responses request to the subset accepted by the Codex
+// upstream. This follows CLIProxyAPI's Codex normalization, except that we
+// preserve the caller's stream choice so ModelPort can continue to provide
+// non-streaming Responses replies.
 function normalizeCodexResponseRequest(body) {
-  if (!Array.isArray(body?.input)) return body;
+  const normalized = { ...body };
+  for (const field of [
+    "max_output_tokens",
+    "max_completion_tokens",
+    "temperature",
+    "top_p",
+    "truncation",
+    "prompt_cache_options",
+    "prompt_cache_retention",
+    "context_management",
+    "user"
+  ]) delete normalized[field];
 
-  let changed = false;
-  const input = body.input.map(item => {
-    if (!item || typeof item !== "object" || Array.isArray(item) || item.role !== "system") return item;
-    changed = true;
-    return { ...item, role: "developer" };
+  if (normalized.service_tier !== "priority") delete normalized.service_tier;
+  normalized.store = false;
+  normalized.parallel_tool_calls = true;
+  normalized.include = ["reasoning.encrypted_content"];
+  normalized.input = normalizeCodexInput(normalized.input);
+  normalized.tools = normalizeCodexBuiltinTools(normalized.tools);
+  normalized.tool_choice = normalizeCodexToolChoice(normalized.tool_choice);
+  return normalized;
+}
+
+function normalizeCodexInput(input) {
+  if (typeof input === "string") {
+    return [{
+      type: "message",
+      role: "user",
+      content: [{ type: "input_text", text: input }]
+    }];
+  }
+  if (!Array.isArray(input)) return input;
+
+  return input.map(item => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+    const normalized = item.role === "system" ? { ...item, role: "developer" } : { ...item };
+    if (!Array.isArray(normalized.content)) return normalized;
+    normalized.content = normalized.content.map(part => {
+      if (!part || typeof part !== "object" || Array.isArray(part) || !Object.hasOwn(part, "prompt_cache_breakpoint")) return part;
+      const { prompt_cache_breakpoint, ...rest } = part;
+      return rest;
+    });
+    return normalized;
   });
+}
 
-  return changed ? { ...body, input } : body;
+function normalizeCodexBuiltinToolType(type) {
+  return ["web_search_preview", "web_search_preview_2025_03_11"].includes(type) ? "web_search" : type;
+}
+
+function normalizeCodexBuiltinTools(tools) {
+  if (!Array.isArray(tools)) return tools;
+  return tools.map(tool => {
+    if (!tool || typeof tool !== "object" || Array.isArray(tool)) return tool;
+    const type = normalizeCodexBuiltinToolType(tool.type);
+    return type === tool.type ? tool : { ...tool, type };
+  });
+}
+
+function normalizeCodexToolChoice(choice) {
+  if (!choice || typeof choice !== "object" || Array.isArray(choice)) return choice;
+  const normalized = { ...choice };
+  normalized.type = normalizeCodexBuiltinToolType(normalized.type);
+  if (Array.isArray(normalized.tools)) normalized.tools = normalizeCodexBuiltinTools(normalized.tools);
+  return normalized;
 }
 
 async function requestCodexImage(channel, modelId, body, signal, action = "generations") {

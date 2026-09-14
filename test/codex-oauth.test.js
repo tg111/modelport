@@ -192,22 +192,51 @@ test("Codex OAuth Responses requests use the stored token and account header", a
     assert.equal(received.url, "https://chatgpt.com/backend-api/codex/responses");
     assert.equal(received.options.headers.authorization, "Bearer access-secret");
     assert.equal(received.options.headers["chatgpt-account-id"], "account-123");
-    assert.deepEqual(JSON.parse(received.options.body), { input: "hello", model: "gpt-5.6-sol" });
+    assert.deepEqual(JSON.parse(received.options.body), {
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "hello" }]
+      }],
+      model: "gpt-5.6-sol",
+      store: false,
+      parallel_tool_calls: true,
+      include: ["reasoning.encrypted_content"]
+    });
   } finally {
     global.fetch = previousFetch;
     state.db.settings.textTimeoutSeconds = previousTimeout;
   }
 });
 
-test("Codex OAuth converts Responses system messages to developer messages", () => {
+test("Codex OAuth applies CPA-compatible Responses normalization", () => {
   const request = {
     model: "gpt-5.6-sol",
+    max_output_tokens: 1000,
+    max_completion_tokens: 1000,
+    temperature: 0.2,
+    top_p: 0.9,
+    truncation: "auto",
+    prompt_cache_options: { mode: "implicit" },
+    prompt_cache_retention: "24h",
+    context_management: { type: "compaction" },
+    user: "openclaw-user",
+    service_tier: "standard",
+    store: true,
+    parallel_tool_calls: false,
+    include: ["web_search_call.action.sources"],
     input: [
-      { type: "message", role: "system", content: [{ type: "input_text", text: "OpenClaw instructions" }] },
+      {
+        type: "message",
+        role: "system",
+        content: [{ type: "input_text", text: "OpenClaw instructions", prompt_cache_breakpoint: { mode: "explicit" } }]
+      },
       { type: "message", role: "user", content: [{ type: "input_text", text: "Hello" }] },
       { type: "message", role: "developer", content: [{ type: "input_text", text: "Existing developer message" }] },
       { type: "function_call", name: "lookup", arguments: "{}" }
-    ]
+    ],
+    tools: [{ type: "web_search_preview" }],
+    tool_choice: { type: "web_search_preview_2025_03_11", tools: [{ type: "web_search_preview" }] }
   };
 
   const normalized = normalizeCodexResponseRequest(request);
@@ -216,7 +245,34 @@ test("Codex OAuth converts Responses system messages to developer messages", () 
   assert.equal(normalized.input[1].role, "user");
   assert.equal(normalized.input[2].role, "developer");
   assert.equal(normalized.input[3].type, "function_call");
+  assert.equal(Object.hasOwn(normalized.input[0].content[0], "prompt_cache_breakpoint"), false);
+  assert.equal(Object.hasOwn(normalized, "max_output_tokens"), false);
+  assert.equal(Object.hasOwn(normalized, "max_completion_tokens"), false);
+  assert.equal(Object.hasOwn(normalized, "temperature"), false);
+  assert.equal(Object.hasOwn(normalized, "top_p"), false);
+  assert.equal(Object.hasOwn(normalized, "truncation"), false);
+  assert.equal(Object.hasOwn(normalized, "prompt_cache_options"), false);
+  assert.equal(Object.hasOwn(normalized, "prompt_cache_retention"), false);
+  assert.equal(Object.hasOwn(normalized, "context_management"), false);
+  assert.equal(Object.hasOwn(normalized, "user"), false);
+  assert.equal(Object.hasOwn(normalized, "service_tier"), false);
+  assert.equal(normalized.store, false);
+  assert.equal(normalized.parallel_tool_calls, true);
+  assert.deepEqual(normalized.include, ["reasoning.encrypted_content"]);
+  assert.equal(normalized.tools[0].type, "web_search");
+  assert.equal(normalized.tool_choice.type, "web_search");
+  assert.equal(normalized.tool_choice.tools[0].type, "web_search");
   assert.equal(request.input[0].role, "system");
+  assert.equal(request.max_output_tokens, 1000);
+});
+
+test("Codex OAuth converts string input to a standard user message", () => {
+  const normalized = normalizeCodexResponseRequest({ model: "gpt-5.6-sol", input: "Hello" });
+  assert.deepEqual(normalized.input, [{
+    type: "message",
+    role: "user",
+    content: [{ type: "input_text", text: "Hello" }]
+  }]);
 });
 
 test("Codex OAuth fetches the account models and adds CPA's built-in image models", async () => {
