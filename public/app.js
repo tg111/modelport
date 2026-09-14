@@ -57,6 +57,7 @@ let channelSearch = "";
 let channelSort = "created_desc";
 let channelVisibility = "all";
 let selectedProxyModels = new Set();
+const expandedQuotaChannelIds = new Set();
 let usagePage = 1;
 let usagePageSize = Number(usagePageSizeEl?.value || 20);
 let usageTotalPages = 1;
@@ -831,14 +832,14 @@ function quotaCardHtml(label, window) {
   `;
 }
 
-function codexQuotaHtml(oauth) {
+function codexQuotaHtml(oauth, expanded = false) {
   const quota = oauth.quota || {};
   const fetchedAt = formatOAuthDate(quota.fetchedAt, "尚未读取");
   const subscriptionExpiry = formatOAuthShortDate(oauth.subscriptionExpiresAt);
   const subscriptionRelative = formatOAuthRelativeTime(oauth.subscriptionExpiresAt);
   const planType = formatPlanType(oauth.planType || quota.planType);
   return `
-    <section class="oauth-quota-panel hidden" aria-label="Codex 额度">
+    <section class="oauth-quota-panel${expanded ? "" : " hidden"}" aria-label="Codex 额度">
       <div class="oauth-quota-panel-head">
         <div>
           <strong>Codex 额度</strong>
@@ -1054,6 +1055,7 @@ function renderChannels() {
         : "";
     const circuit = channel.circuit || {};
     const circuitBreakerExempt = channel.circuitBreakerExempt === true;
+    const quotaExpanded = expandedQuotaChannelIds.has(channel.id);
     const circuitOpen = circuit.status === "open";
     const circuitHalfOpen = circuit.status === "half_open";
     const circuitBadge = circuitOpen
@@ -1096,7 +1098,7 @@ function renderChannels() {
               ${isCodexOAuth ? "" : `<button type="button" class="btn ghost sm" data-action="fetch"><img class="btn-icon" src="/assets/icons/refresh-cw.svg" alt="" aria-hidden="true">获取模型</button>`}
               ${circuitOpen || circuitHalfOpen ? `<button type="button" class="btn ghost sm" data-action="reset-circuit">立即恢复</button>` : ""}
               <button type="button" class="btn ghost sm" data-action="toggle-models"><img class="btn-icon" src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true"><span data-toggle-model-label>展开模型</span></button>
-              ${isCodexOAuth ? `<button type="button" class="btn ghost sm" data-action="toggle-quota"><img class="btn-icon" src="/assets/icons/chevron-down.svg" alt="" aria-hidden="true"><span data-toggle-quota-label>展开额度</span></button>` : ""}
+              ${isCodexOAuth ? `<button type="button" class="btn ghost sm" data-action="toggle-quota"><img class="btn-icon" src="/assets/icons/${quotaExpanded ? "chevron-up.svg" : "chevron-down.svg"}" alt="" aria-hidden="true"><span data-toggle-quota-label>${quotaExpanded ? "折叠额度" : "展开额度"}</span></button>` : ""}
               <button type="button" class="btn danger sm" data-action="delete"><img class="btn-icon" src="/assets/icons/trash-2.svg" alt="" aria-hidden="true">删除</button>
             </div>
           </div>
@@ -1117,7 +1119,7 @@ function renderChannels() {
             ${recentBar}
           </div>
         </div>
-        ${isCodexOAuth ? codexQuotaHtml(oauth) : ""}
+        ${isCodexOAuth ? codexQuotaHtml(oauth, quotaExpanded) : ""}
         <div class="models-section hidden">
           <div class="model-tools">
             <input type="search" class="model-filter-input" data-model-filter placeholder="筛选上游模型 ID 或代理模型名">
@@ -1310,6 +1312,8 @@ async function channelAction(id, action, control) {
       const btn = cardEl.querySelector('[data-action="toggle-quota"]');
       const willOpen = quotaEl.classList.contains("hidden");
       quotaEl.classList.toggle("hidden", !willOpen);
+      if (willOpen) expandedQuotaChannelIds.add(id);
+      else expandedQuotaChannelIds.delete(id);
       btn.querySelector("[data-toggle-quota-label]").textContent = willOpen ? "折叠额度" : "展开额度";
       btn.querySelector(".btn-icon").src = willOpen ? "/assets/icons/chevron-up.svg" : "/assets/icons/chevron-down.svg";
       return;
