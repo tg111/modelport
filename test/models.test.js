@@ -43,6 +43,15 @@ test("channel priority defaults to one and stays within its supported range", ()
   assert.equal(sanitizeChannel({ apiBase: "https://example.com", apiKey: "key" }).priority, 1);
 });
 
+test("channel circuit-breaker exemption defaults off and can be changed", () => {
+  const original = sanitizeChannel({ apiBase: "https://example.com", apiKey: "key" });
+  assert.equal(original.circuitBreakerExempt, false);
+  const exempt = sanitizeChannel({ circuitBreakerExempt: "true" }, original);
+  assert.equal(exempt.circuitBreakerExempt, true);
+  const included = sanitizeChannel({ circuitBreakerExempt: false }, exempt);
+  assert.equal(included.circuitBreakerExempt, false);
+});
+
 test("higher-priority channels are always selected before lower-priority fallbacks", () => {
   const previousChannels = state.db.channels;
   const previousRoundRobin = new Map(state.rr);

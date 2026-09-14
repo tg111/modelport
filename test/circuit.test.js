@@ -50,6 +50,26 @@ test("authentication failures open the circuit immediately", () => {
   assert.equal(circuit.reason.kind, "auth");
 });
 
+test("circuit-breaker-exempt channels stay routable and do not accumulate failures", () => {
+  const item = { ...channel("exempt"), circuitBreakerExempt: true };
+  item.circuit = {
+    status: "open",
+    consecutiveFailures: 3,
+    retryAt: new Date(Date.now() + 60_000).toISOString()
+  };
+
+  assert.equal(beginChannelAttempt(item), true);
+  assert.equal(recordChannelFailure(item, Object.assign(new Error("unauthorized"), { upstreamStatus: 401 })), false);
+  assert.deepEqual(publicCircuit(item), {
+    status: "closed",
+    consecutiveFailures: 0,
+    openedAt: null,
+    retryAt: null,
+    reason: null
+  });
+  assert.equal(beginHealthCheck(item), false);
+});
+
 test("an expired circuit blocks real traffic and permits one health check", () => {
   const item = channel("half-open");
   item.circuit = {

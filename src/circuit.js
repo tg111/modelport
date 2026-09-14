@@ -13,7 +13,28 @@ function circuitFor(channel) {
   return channel.circuit;
 }
 
+function isCircuitBreakerExempt(channel) {
+  return channel?.circuitBreakerExempt === true;
+}
+
+function closeCircuitIfNeeded(channel) {
+  const circuit = circuitFor(channel);
+  const changed = circuit.status !== "closed" || Number(circuit.consecutiveFailures || 0) > 0 || halfOpenInFlight.has(channel.id);
+  halfOpenInFlight.delete(channel.id);
+  if (changed) channel.circuit = { status: "closed", consecutiveFailures: 0 };
+  return changed;
+}
+
 function publicCircuit(channel) {
+  if (isCircuitBreakerExempt(channel)) {
+    return {
+      status: "closed",
+      consecutiveFailures: 0,
+      openedAt: null,
+      retryAt: null,
+      reason: null
+    };
+  }
   const circuit = circuitFor(channel);
   return {
     status: halfOpenInFlight.has(channel.id) ? "half_open" : circuit.status,
@@ -25,11 +46,13 @@ function publicCircuit(channel) {
 }
 
 function beginChannelAttempt(channel) {
+  if (isCircuitBreakerExempt(channel)) return true;
   const circuit = circuitFor(channel);
   return circuit.status !== "open";
 }
 
 function beginHealthCheck(channel) {
+  if (isCircuitBreakerExempt(channel)) return false;
   const circuit = circuitFor(channel);
   if (channel.enabled === false || circuit.status !== "open") return false;
   const retryAt = Date.parse(circuit.retryAt || "");
@@ -68,6 +91,10 @@ function openCircuit(channel, error, kind) {
 }
 
 function recordChannelFailure(channel, error) {
+  if (isCircuitBreakerExempt(channel)) {
+    if (closeCircuitIfNeeded(channel)) queueDbSave();
+    return false;
+  }
   const circuit = circuitFor(channel);
   const wasHalfOpen = halfOpenInFlight.delete(channel.id);
   const kind = failureKind(error);
@@ -82,11 +109,7 @@ function recordChannelFailure(channel, error) {
 }
 
 function recordChannelSuccess(channel) {
-  const circuit = circuitFor(channel);
-  const changed = circuit.status !== "closed" || Number(circuit.consecutiveFailures || 0) > 0 || halfOpenInFlight.has(channel.id);
-  halfOpenInFlight.delete(channel.id);
-  if (!changed) return;
-  channel.circuit = { status: "closed", consecutiveFailures: 0 };
+  if (!closeCircuitIfNeeded(channel)) return;
   queueDbSave();
 }
 
@@ -95,6 +118,10 @@ function releaseChannelAttempt(channel) {
 }
 
 function deferHealthCheck(channel, error) {
+  if (isCircuitBreakerExempt(channel)) {
+    if (closeCircuitIfNeeded(channel)) queueDbSave();
+    return false;
+  }
   halfOpenInFlight.delete(channel.id);
   const circuit = circuitFor(channel);
   circuit.status = "open";
@@ -118,6 +145,7 @@ module.exports = {
   beginChannelAttempt,
   beginHealthCheck,
   deferHealthCheck,
+  isCircuitBreakerExempt,
   publicCircuit,
   recordChannelFailure,
   recordChannelSuccess,

@@ -253,6 +253,14 @@
           <input name="priority" type="number" min="1" max="1000" step="1" value="1" required>
           <p class="field-hint">值越大越优先；相同优先级的渠道会轮询。</p>
         </label>
+        <div class="field">
+          <span>熔断白名单</span>
+          <label class="toggle-wrap" for="addCircuitBreakerExempt">
+            <input id="addCircuitBreakerExempt" name="circuitBreakerExempt" type="checkbox">
+            <span class="toggle-track" aria-hidden="true"></span>
+          </label>
+          <p class="field-hint">加入后，该渠道失败仍会记录，但不会自动熔断。</p>
+        </div>
         <label class="field">
           <span>渠道官网</span>
           <input name="providerLink" placeholder="https://example.com">
@@ -313,6 +321,14 @@
           <input name="priority" type="number" min="1" max="1000" step="1" value="1" required>
           <p class="field-hint">值越大越优先；相同优先级的渠道会轮询。</p>
         </label>
+        <div class="field">
+          <span>熔断白名单</span>
+          <label class="toggle-wrap" for="editCircuitBreakerExempt">
+            <input id="editCircuitBreakerExempt" name="circuitBreakerExempt" type="checkbox">
+            <span class="toggle-track" aria-hidden="true"></span>
+          </label>
+          <p class="field-hint">加入后，该渠道失败仍会记录，但不会自动熔断。</p>
+        </div>
         <div id="editCodexOAuthInfo" class="oauth-account-info hidden" aria-live="polite">
           <strong>Codex OAuth 已连接</strong>
           <span id="editCodexOAuthMeta"></span>

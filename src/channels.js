@@ -166,6 +166,9 @@ function sanitizeChannel(input, previous = {}) {
       providerLink: String(input.providerLink || previous.providerLink || "https://chatgpt.com"),
       priority: normalizeChannelPriority(input.priority, previous.priority),
       enabled: input.enabled === undefined ? previous.enabled !== false : Boolean(input.enabled),
+      circuitBreakerExempt: input.circuitBreakerExempt === undefined
+        ? previous.circuitBreakerExempt === true
+        : input.circuitBreakerExempt === true || input.circuitBreakerExempt === "true",
       updatedAt: new Date().toISOString()
     };
   }
@@ -183,6 +186,9 @@ function sanitizeChannel(input, previous = {}) {
     providerLink: String(input.providerLink || ""),
     priority: normalizeChannelPriority(input.priority, previous.priority),
     enabled: input.enabled === undefined ? previous.enabled !== false : Boolean(input.enabled),
+    circuitBreakerExempt: input.circuitBreakerExempt === undefined
+      ? previous.circuitBreakerExempt === true
+      : input.circuitBreakerExempt === true || input.circuitBreakerExempt === "true",
     models: Array.isArray(previous.models) ? previous.models : [],
     testModelId: previous.testModelId || "",
     createdAt: previous.createdAt || new Date().toISOString(),

@@ -241,6 +241,7 @@ async function api(req, res, url) {
       const body = await readBody(req);
       const nextChannel = sanitizeChannel(body, channel);
       Object.assign(channel, nextChannel);
+      if (channel.circuitBreakerExempt) resetChannelCircuit(channel);
       queueProtocolDetection(channel);
       clearProtocolDetectionWhenManual(channel);
       saveDb();

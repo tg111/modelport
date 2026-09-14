@@ -257,6 +257,7 @@ function openAddModal(channel = null) {
     addForm.elements.providerLink.value = channel.providerLink || "";
     addForm.elements.protocol.value = channel.protocol || "auto";
     addForm.elements.priority.value = channel.priority || 1;
+    addForm.elements.circuitBreakerExempt.checked = channel.circuitBreakerExempt === true;
   }
   bindProtocolAutoHint(addForm);
   addModal.classList.remove("hidden");
@@ -302,6 +303,7 @@ document.querySelector("#channelForm").addEventListener("submit", async event =>
   const formEl = event.currentTarget;
   const submitBtn = formEl.querySelector("button[type='submit']");
   const payload = formPayload(formEl);
+  payload.circuitBreakerExempt = formEl.elements.circuitBreakerExempt.checked;
   submitBtn.disabled = true;
   try {
     const channel = await request("/api/channels", { method: "POST", body: JSON.stringify(payload) });
@@ -523,6 +525,7 @@ editForm.addEventListener("submit", async event => {
   const formEl = event.currentTarget;
   const submitBtn = formEl.querySelector("button[type='submit']");
   const payload = formPayload(formEl);
+  payload.circuitBreakerExempt = formEl.elements.circuitBreakerExempt.checked;
   const id = payload.id;
   delete payload.id;
   if (formEl.dataset.authType === "codex_oauth") {
@@ -1050,6 +1053,7 @@ function renderChannels() {
         ? `<span class="badge protocol-badge">识别失败</span>`
         : "";
     const circuit = channel.circuit || {};
+    const circuitBreakerExempt = channel.circuitBreakerExempt === true;
     const circuitOpen = circuit.status === "open";
     const circuitHalfOpen = circuit.status === "half_open";
     const circuitBadge = circuitOpen
@@ -1070,6 +1074,7 @@ function renderChannels() {
               <span class="card-name">${escapeHtml(channel.note || channel.apiBase)}</span>
               <span class="badge protocol-badge">${protocolLabel}</span>
               <span class="badge priority-badge">优先级 ${priority}</span>
+              ${circuitBreakerExempt ? `<span class="badge circuit-exempt-badge">熔断白名单</span>` : ""}
               ${isCodexOAuth ? `<span class="badge protocol-badge">Codex OAuth</span>` : ""}
               ${detectionBadge}
               ${circuitBadge}
@@ -1415,6 +1420,7 @@ async function openEditModal(id) {
   editForm.elements.providerLink.value = channel.providerLink || "";
   editForm.elements.protocol.value = channel.protocol || "auto";
   editForm.elements.priority.value = channel.priority || 1;
+  editForm.elements.circuitBreakerExempt.checked = channel.circuitBreakerExempt === true;
   setEditAuthMode(channel);
   bindProtocolAutoHint(editForm);
   editModal.classList.remove("hidden");
