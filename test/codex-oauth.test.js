@@ -21,7 +21,7 @@ const {
   startCodexAuthorization,
   storedOAuthInfo
 } = require("../src/codex-oauth");
-const { callImageGenerations, callResponses } = require("../src/providers");
+const { callImageGenerations, callResponses, testChannel } = require("../src/providers");
 const { proxyResponses } = require("../src/proxy");
 
 function unsignedJwt(claims) {
@@ -225,6 +225,58 @@ test("Codex OAuth Responses requests use the stored token and account header", a
       parallel_tool_calls: true,
       include: ["reasoning.encrypted_content"]
     });
+  } finally {
+    global.fetch = previousFetch;
+    state.db.settings.textTimeoutSeconds = previousTimeout;
+  }
+});
+
+test("Codex OAuth channel tests request and collect a streaming Response", async () => {
+  const channel = {
+    enabled: true,
+    authType: "codex_oauth",
+    codexOAuth: storedOAuthInfo({
+      accessToken: "access-secret",
+      refreshToken: "refresh-secret",
+      idToken: "",
+      expiresAt: "2030-01-01T00:00:00.000Z"
+    }),
+    models: [{ id: "gpt-5.6-sol", alias: "codex-test", enabled: true }]
+  };
+  const previousFetch = global.fetch;
+  const previousTimeout = state.db.settings.textTimeoutSeconds;
+  let received;
+  global.fetch = async (url, options) => {
+    received = { url, options };
+    return new Response([
+      "event: response.output_text.delta\n",
+      'data: {"type":"response.output_text.delta","delta":"hello"}\n\n',
+      "event: response.output_text.done\n",
+      'data: {"type":"response.output_text.done","text":"hello"}\n\n',
+      "event: response.completed\n",
+      'data: {"type":"response.completed","response":{"id":"response_1","usage":{"input_tokens":3,"output_tokens":1}}}\n\n'
+    ].join(""), { status: 200, headers: { "content-type": "text/event-stream" } });
+  };
+  state.db.settings.textTimeoutSeconds = 10;
+  try {
+    const result = await testChannel(channel, "hello");
+    assert.equal(received.url, "https://chatgpt.com/backend-api/codex/responses");
+    assert.equal(received.options.headers.accept, "text/event-stream");
+    assert.deepEqual(JSON.parse(received.options.body), {
+      model: "gpt-5.6-sol",
+      input: [{
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: "hello" }]
+      }],
+      stream: true,
+      store: false,
+      parallel_tool_calls: true,
+      include: ["reasoning.encrypted_content"]
+    });
+    assert.equal(result.upstream.stream, false);
+    assert.equal(result.upstream.body.output_text, "hello");
+    assert.deepEqual(result.upstream.body.usage, { input_tokens: 3, output_tokens: 1 });
   } finally {
     global.fetch = previousFetch;
     state.db.settings.textTimeoutSeconds = previousTimeout;

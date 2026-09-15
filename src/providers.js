@@ -21,10 +21,78 @@ async function testChannel(channel, message = "你好", modelId) {
   if (!model) throw new Error("No model found for this channel. Please fetch models first.");
   const body = {
     model: model.alias || model.id,
-    input: message || "你好"
+    input: message || "你好",
+    ...(isCodexOAuthChannel(channel) ? { stream: true } : {})
   };
   const upstream = await callResponses(channel, model.id, body);
-  return { model, upstream };
+  return { model, upstream: upstream.stream ? await collectTestStream(upstream) : upstream };
+}
+
+async function collectTestStream(upstream) {
+  const decoder = new TextDecoder();
+  let remainder = "";
+  let completedResponse = null;
+  let usage = null;
+  let outputText = "";
+  let doneText = "";
+
+  const processEvent = event => {
+    const data = event.split(/\r?\n/)
+      .filter(line => line.startsWith("data:"))
+      .map(line => line.slice(5).trim())
+      .join("\n")
+      .trim();
+    if (!data || data === "[DONE]") return;
+
+    let payload;
+    try {
+      payload = JSON.parse(data);
+    } catch {
+      return;
+    }
+
+    const eventType = payload.type || event.match(/^event:\s*(.+)$/m)?.[1] || "";
+    const error = payload.error || (eventType === "response.failed" ? payload.response?.error : null);
+    if (error) {
+      throw upstreamError(error.message || "Upstream streaming request failed", {
+        upstreamStatus: upstream.status,
+        upstreamBody: preview(payload)
+      });
+    }
+
+    const response = payload.response?.response || payload.response;
+    if (response && typeof response === "object") {
+      completedResponse = response;
+      if (response.usage) usage = response.usage;
+    }
+    if (payload.usage) usage = payload.usage;
+    if (eventType === "response.output_text.delta" && typeof payload.delta === "string") outputText += payload.delta;
+    if (eventType === "response.output_text.done" && typeof payload.text === "string") doneText = payload.text;
+  };
+
+  const processBufferedEvents = flush => {
+    const events = remainder.split(/\r?\n\r?\n/);
+    remainder = flush ? "" : events.pop() || "";
+    for (const event of events) processEvent(event);
+    if (flush && remainder) processEvent(remainder);
+  };
+
+  try {
+    for await (const chunk of upstream.body) {
+      remainder += decoder.decode(chunk, { stream: true });
+      processBufferedEvents(false);
+    }
+    remainder += decoder.decode();
+    processBufferedEvents(true);
+  } finally {
+    upstream.cancelTimeout?.();
+  }
+
+  const body = { ...(completedResponse || {}) };
+  const finalText = responseOutputText(body) || doneText || outputText;
+  if (finalText && !responseOutputText(body)) body.output_text = finalText;
+  if (usage && !body.usage) body.usage = usage;
+  return { ...upstream, stream: false, body };
 }
 
 async function callResponses(channel, modelId, body) {
