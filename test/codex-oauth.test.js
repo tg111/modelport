@@ -21,7 +21,7 @@ const {
   startCodexAuthorization,
   storedOAuthInfo
 } = require("../src/codex-oauth");
-const { callImageGenerations, callResponses, testChannel } = require("../src/providers");
+const { callImageEdits, callImageGenerations, callResponses, testChannel } = require("../src/providers");
 const { proxyResponses } = require("../src/proxy");
 
 function unsignedJwt(claims) {
@@ -42,6 +42,25 @@ function responseCapture() {
     end(body) {
       this.body = typeof body === "string" ? body : String(body || "");
     }
+  };
+}
+
+function multipartImageEdit(parts) {
+  const boundary = "ModelPortCodexImageEditBoundary";
+  const chunks = [];
+  for (const part of parts) {
+    chunks.push(Buffer.from(`--${boundary}\r\n`));
+    const disposition = `Content-Disposition: form-data; name="${part.name}"${part.filename ? `; filename="${part.filename}"` : ""}\r\n`;
+    chunks.push(Buffer.from(disposition));
+    if (part.type) chunks.push(Buffer.from(`Content-Type: ${part.type}\r\n`));
+    chunks.push(Buffer.from("\r\n"));
+    chunks.push(Buffer.isBuffer(part.value) ? part.value : Buffer.from(String(part.value)));
+    chunks.push(Buffer.from("\r\n"));
+  }
+  chunks.push(Buffer.from(`--${boundary}--\r\n`));
+  return {
+    body: Buffer.concat(chunks),
+    contentType: `multipart/form-data; boundary=${boundary}`
   };
 }
 
@@ -646,6 +665,64 @@ test("Codex OAuth sends built-in image models to CPA's direct image endpoint", a
     assert.equal(received.options.headers.authorization, "Bearer access-secret");
     assert.equal(received.options.headers["chatgpt-account-id"], "account-123");
     assert.deepEqual(JSON.parse(received.options.body), { prompt: "a cat", model: "gpt-image-2.5" });
+  } finally {
+    global.fetch = previousFetch;
+    state.db.settings.imageTimeoutSeconds = previousTimeout;
+  }
+});
+
+test("Codex OAuth converts multipart image edits for CPA's direct image endpoint", async () => {
+  const credentials = {
+    accessToken: "access-secret",
+    refreshToken: "refresh-secret",
+    idToken: "",
+    email: "owner@example.com",
+    accountId: "account-123",
+    planType: "plus",
+    expiresAt: "2030-01-01T00:00:00.000Z"
+  };
+  const channel = {
+    authType: "codex_oauth",
+    codexOAuth: storedOAuthInfo(credentials)
+  };
+  const request = multipartImageEdit([
+    { name: "model", value: "image-alias" },
+    { name: "prompt", value: "Replace the background" },
+    { name: "n", value: "2" },
+    { name: "output_format", value: "webp" },
+    { name: "mask[file_id]", value: "existing-mask" },
+    { name: "image[]", filename: "source.png", type: "image/png", value: "source-image" },
+    { name: "mask", filename: "mask.png", type: "image/png", value: "mask-image" }
+  ]);
+  const previousFetch = global.fetch;
+  const previousTimeout = state.db.settings.imageTimeoutSeconds;
+  let received;
+  global.fetch = async (url, options) => {
+    received = { url, options };
+    return new Response(JSON.stringify({ created: 1, data: [{ b64_json: "image-data" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    });
+  };
+  state.db.settings.imageTimeoutSeconds = 10;
+  try {
+    const result = await callImageEdits(channel, request.body, { headers: { "content-type": request.contentType } }, "gpt-image-2.5");
+    assert.deepEqual(result.body, { created: 1, data: [{ b64_json: "image-data" }] });
+    assert.equal(received.url, "https://chatgpt.com/backend-api/codex/images/edits");
+    assert.equal(received.options.headers.authorization, "Bearer access-secret");
+    assert.equal(received.options.headers["chatgpt-account-id"], "account-123");
+    assert.equal(received.options.headers["content-type"], "application/json");
+    assert.deepEqual(JSON.parse(received.options.body), {
+      model: "gpt-image-2.5",
+      prompt: "Replace the background",
+      n: 2,
+      output_format: "webp",
+      images: [{ image_url: "data:image/png;base64,c291cmNlLWltYWdl" }],
+      mask: {
+        file_id: "existing-mask",
+        image_url: "data:image/png;base64,bWFzay1pbWFnZQ=="
+      }
+    });
   } finally {
     global.fetch = previousFetch;
     state.db.settings.imageTimeoutSeconds = previousTimeout;

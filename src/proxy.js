@@ -201,7 +201,7 @@ async function proxyImageEdits(req, res, rawBody) {
     const startedAt = Date.now();
     try {
       const upstreamBody = replaceMultipartModel(rawBody, boundary, model.id);
-      const upstream = await callImageEdits(channel, upstreamBody, req);
+      const upstream = await callImageEdits(channel, upstreamBody, req, model.id);
       recordChannelSuccess(channel);
       usageRecord({ requestId, attempt: attemptNumber, success: true, endpoint: req.url, durationSeconds: elapsedSeconds(startedAt), ttftSeconds: null, model: alias, sourceModel: model.id, channelId: channel.id, channelNote: channel.note, ip });
       return send(res, upstream.status, upstream.body, upstream.headers);
