@@ -126,9 +126,9 @@ async function callImageGenerations(channel, modelId, body) {
   });
 }
 
-async function callImageEdits(channel, rawBody, req) {
+async function callImageEdits(channel, rawBody, req, modelId) {
   if (isCodexOAuthChannel(channel)) {
-    throw upstreamError("Codex OAuth channels do not support image editing through ModelPort", { upstreamStatus: 400 });
+    return callCodexOAuthImageEdit(channel, modelId, rawBody, req);
   }
   return callRawEndpoint(channel, "/images/edits", rawBody, req, {
     timeoutMs: state.db.settings.imageTimeoutSeconds * 1000,
@@ -205,6 +205,104 @@ async function callCodexOAuthImage(channel, modelId, body) {
     upstreamUrl: `${CODEX_UPSTREAM_BASE}/images/generations`,
     request: requestCodexImage
   });
+}
+
+async function callCodexOAuthImageEdit(channel, modelId, rawBody, req) {
+  const body = await codexOAuthImageEditBody(rawBody, req, modelId);
+  return callCodexOAuthRequest(channel, modelId, body, {
+    timeoutMs: state.db.settings.imageTimeoutSeconds * 1000,
+    timeoutLabel: "image request",
+    upstreamUrl: `${CODEX_UPSTREAM_BASE}/images/edits`,
+    request: (oauthChannel, oauthModelId, requestBody, signal) => requestCodexImage(
+      oauthChannel,
+      oauthModelId,
+      requestBody,
+      signal,
+      "edits"
+    )
+  });
+}
+
+async function codexOAuthImageEditBody(rawBody, req, modelId) {
+  const contentType = String(req?.headers?.["content-type"] || req?.headers?.["Content-Type"] || "").trim();
+  if (!/^multipart\/form-data(?:;|$)/i.test(contentType)) {
+    throw upstreamError("Codex OAuth image edits require multipart/form-data", { upstreamStatus: 400 });
+  }
+
+  let form;
+  try {
+    form = await new Response(rawBody, { headers: { "content-type": contentType } }).formData();
+  } catch (error) {
+    throw upstreamError(`Invalid multipart image edit request: ${error.message}`, { upstreamStatus: 400 });
+  }
+
+  const body = { model: modelId };
+  const imageFiles = [];
+  let maskFile = null;
+  for (const [name, value] of form.entries()) {
+    if (name === "model" || name === "stream") continue;
+    if (isCodexImageEditFile(value)) {
+      if (name === "image" || name === "image[]") imageFiles.push(value);
+      else if (name === "mask" && !maskFile) maskFile = value;
+      continue;
+    }
+    setCodexImageEditFormValue(body, name, value);
+  }
+
+  try {
+    if (imageFiles.length) {
+      body.images = await Promise.all(imageFiles.map(async file => ({ image_url: await codexImageEditDataUrl(file) })));
+    }
+    if (maskFile) {
+      body.mask = {
+        ...(body.mask && typeof body.mask === "object" ? body.mask : {}),
+        image_url: await codexImageEditDataUrl(maskFile)
+      };
+    }
+  } catch (error) {
+    throw upstreamError(`Unable to read image edit upload: ${error.message}`, { upstreamStatus: 400 });
+  }
+
+  return body;
+}
+
+function isCodexImageEditFile(value) {
+  return Boolean(value && typeof value === "object" && typeof value.arrayBuffer === "function" && typeof value.name === "string");
+}
+
+function setCodexImageEditFormValue(body, name, value) {
+  const text = String(value || "").trim();
+  if (name === "mask[file_id]" || name === "mask[image_url]") {
+    body.mask = body.mask && typeof body.mask === "object" ? body.mask : {};
+    body.mask[name === "mask[file_id]" ? "file_id" : "image_url"] = text;
+    return;
+  }
+  const parsed = ["n", "output_compression", "partial_images"].includes(name) && /^-?\d+$/.test(text)
+    ? Number(text)
+    : text;
+  if (!Object.hasOwn(body, name)) {
+    body[name] = parsed;
+    return;
+  }
+  body[name] = Array.isArray(body[name]) ? [...body[name], parsed] : [body[name], parsed];
+}
+
+async function codexImageEditDataUrl(file) {
+  const buffer = Buffer.from(await file.arrayBuffer());
+  const type = String(file.type || "").trim() || codexImageMimeType(file.name);
+  return `data:${type};base64,${buffer.toString("base64")}`;
+}
+
+function codexImageMimeType(name) {
+  const extension = String(name || "").trim().toLowerCase().match(/\.[a-z0-9]+$/)?.[0];
+  return {
+    ".avif": "image/avif",
+    ".gif": "image/gif",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp"
+  }[extension] || "application/octet-stream";
 }
 
 async function callCodexOAuthRequest(channel, modelId, body, options) {
