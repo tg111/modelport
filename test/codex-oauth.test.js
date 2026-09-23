@@ -9,6 +9,7 @@ const { state } = require("../src/state");
 const { publicChannel } = require("../src/channels");
 const {
   CODEX_CALLBACK_URI,
+  CODEX_CLIENT_VERSION,
   cancelCodexAuthorization,
   completeCodexAuthorization,
   defaultCodexModels,
@@ -386,11 +387,12 @@ test("Codex OAuth fetches the account models and adds CPA's built-in image model
       "gpt-image-2.5-sunburst",
       "gpt-image-2.5"
     ]);
-    assert.equal(String(received.url), "https://chatgpt.com/backend-api/codex/models?client_version=0.153.3");
+    assert.equal(String(received.url), `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`);
     assert.equal(received.options.headers.authorization, "Bearer access-secret");
     assert.equal(received.options.headers["chatgpt-account-id"], "account-123");
     assert.equal(received.options.headers.originator, "codex_cli_rs");
     assert.equal(received.options.headers.connection, "close");
+    assert.match(received.options.headers["user-agent"], new RegExp(`^codex_cli_rs/${CODEX_CLIENT_VERSION.replaceAll(".", "\\.")}`));
   } finally {
     global.fetch = previousFetch;
   }
@@ -601,7 +603,9 @@ test("Codex OAuth fetches and normalizes the 5-hour and weekly quota windows", a
 
 test("Codex OAuth starts with editable default Codex models", () => {
   assert.deepEqual(defaultCodexModels().map(model => model.id), [
+    "gpt-6-sol",
     "gpt-6-astra",
+    "gpt-6-luna",
     "gpt-5.6-sol",
     "gpt-5.6-terra",
     "gpt-5.6-luna",

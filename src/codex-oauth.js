@@ -7,6 +7,7 @@ const crypto = require("crypto");
 const { queueDbSave } = require("./state");
 const { outboundFetch } = require("./outbound-proxy");
 const { normalizeChannelPriority } = require("./channel-priority");
+const { CODEX_CLIENT_VERSION, CODEX_TUI_USER_AGENT, CODEX_CLI_USER_AGENT } = require("./codex-client-config");
 
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_AUTHORIZATION_URL = "https://auth.openai.com/oauth/authorize";
@@ -14,7 +15,6 @@ const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_CALLBACK_URI = "http://localhost:1455/auth/callback";
 const CODEX_UPSTREAM_BASE = "https://chatgpt.com/backend-api/codex";
 const CODEX_QUOTA_URL = "https://chatgpt.com/backend-api/wham/usage";
-const CODEX_CLIENT_VERSION = "0.153.3";
 const CODEX_AUTHORIZATION_TIMEOUT_MS = 15 * 60 * 1000;
 const CODEX_REFRESH_LEAD_MS = 5 * 60 * 1000;
 
@@ -31,7 +31,9 @@ const CODEX_IMAGE_MODELS = [
 ];
 
 const DEFAULT_CODEX_MODELS = [
+  "gpt-6-sol",
   "gpt-6-astra",
+  "gpt-6-luna",
   "gpt-5.6-sol",
   "gpt-5.6-terra",
   "gpt-5.6-luna",
@@ -405,7 +407,7 @@ function codexHeaders(credentials, stream) {
     accept: stream ? "text/event-stream" : "application/json",
     connection: "Keep-Alive",
     originator: "codex-tui",
-    "user-agent": "codex-tui/0.153.3 (ModelPort OAuth adapter)"
+    "user-agent": CODEX_TUI_USER_AGENT
   };
   if (credentials.accountId) headers["chatgpt-account-id"] = credentials.accountId;
   return headers;
@@ -417,7 +419,7 @@ function codexModelHeaders(credentials) {
     accept: "application/json",
     connection: "close",
     originator: "codex_cli_rs",
-    "user-agent": "codex_cli_rs/0.153.3 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
+    "user-agent": CODEX_CLI_USER_AGENT
   };
 }
 
