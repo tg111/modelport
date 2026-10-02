@@ -370,6 +370,7 @@ test("Codex OAuth converts string input to a standard user message", () => {
 });
 
 test("Codex OAuth fetches the account models and adds CPA's built-in image models", async () => {
+  const previousSettings = state.db.settings;
   const channel = {
     authType: "codex_oauth",
     codexOAuth: storedOAuthInfo({
@@ -406,13 +407,18 @@ test("Codex OAuth fetches the account models and adds CPA's built-in image model
       "gpt-image-2.5-sunburst",
       "gpt-image-2.5"
     ]);
-    assert.equal(String(received.url), `https://chatgpt.com/backend-api/codex/models?client_version=${CODEX_CLIENT_VERSION}`);
+    assert.equal(String(received.url), "https://chatgpt.com/backend-api/codex/models?client_version=0.160.0");
     assert.equal(received.options.headers.authorization, "Bearer access-secret");
     assert.equal(received.options.headers["chatgpt-account-id"], "account-123");
     assert.equal(received.options.headers.originator, "codex_cli_rs");
     assert.equal(received.options.headers.connection, "close");
-    assert.match(received.options.headers["user-agent"], new RegExp(`^codex_cli_rs/${CODEX_CLIENT_VERSION.replaceAll(".", "\\.")}`));
+    assert.match(received.options.headers["user-agent"], /codex_cli_rs\/0\.160\.0 /);
+    state.db.settings = { ...previousSettings, codexClientVersion: "0.161.0" };
+    await fetchCodexModels(channel);
+    assert.equal(String(received.url), "https://chatgpt.com/backend-api/codex/models?client_version=0.161.0");
+    assert.match(received.options.headers["user-agent"], /codex_cli_rs\/0\.161\.0 /);
   } finally {
+    state.db.settings = previousSettings;
     global.fetch = previousFetch;
   }
 });

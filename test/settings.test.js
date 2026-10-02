@@ -16,6 +16,15 @@ test("validateSettings rejects values outside their ranges", () => {
   );
 });
 
+test("Codex client version defaults, trims and rejects invalid versions", () => {
+  assert.equal(validateSettings({}).codexClientVersion, "0.160.0");
+  assert.equal(validateSettings({ codexClientVersion: " 0.161.0 " }).codexClientVersion, "0.161.0");
+  for (const version of ["", "latest", "0.160", "0.160.0\r\nInjected: true", 160]) {
+    assert.throws(() => validateSettings({ codexClientVersion: version }), /codexClientVersion/);
+    assert.equal(normalizeSettings({ codexClientVersion: version }).codexClientVersion, "0.160.0");
+  }
+});
+
 test("validateSettings accepts an HTTP outbound proxy and requires its URL when enabled", () => {
   const settings = validateSettings({
     ...DEFAULT_SETTINGS,

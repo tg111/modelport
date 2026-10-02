@@ -4,10 +4,10 @@
  */
 
 const crypto = require("crypto");
-const { queueDbSave } = require("./state");
+const { queueDbSave, state } = require("./state");
+const { DEFAULT_SETTINGS, normalizeSettings } = require("./settings");
 const { outboundFetch } = require("./outbound-proxy");
 const { normalizeChannelPriority } = require("./channel-priority");
-const { CODEX_CLIENT_VERSION, CODEX_TUI_USER_AGENT, CODEX_CLI_USER_AGENT } = require("./codex-client-config");
 
 const CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const CODEX_AUTHORIZATION_URL = "https://auth.openai.com/oauth/authorize";
@@ -15,6 +15,7 @@ const CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
 const CODEX_CALLBACK_URI = "http://localhost:1455/auth/callback";
 const CODEX_UPSTREAM_BASE = "https://chatgpt.com/backend-api/codex";
 const CODEX_QUOTA_URL = "https://chatgpt.com/backend-api/wham/usage";
+const CODEX_CLIENT_VERSION = DEFAULT_SETTINGS.codexClientVersion;
 const CODEX_AUTHORIZATION_TIMEOUT_MS = 15 * 60 * 1000;
 const CODEX_REFRESH_LEAD_MS = 5 * 60 * 1000;
 
@@ -400,6 +401,10 @@ async function channelCredentials(channel, options = {}) {
   return credentials;
 }
 
+function codexClientVersion() {
+  return normalizeSettings(state.db.settings).codexClientVersion;
+}
+
 function codexHeaders(credentials, stream) {
   const headers = {
     "content-type": "application/json",
@@ -407,7 +412,7 @@ function codexHeaders(credentials, stream) {
     accept: stream ? "text/event-stream" : "application/json",
     connection: "Keep-Alive",
     originator: "codex-tui",
-    "user-agent": CODEX_TUI_USER_AGENT
+    "user-agent": `codex-tui/${codexClientVersion()} (ModelPort OAuth adapter)`
   };
   if (credentials.accountId) headers["chatgpt-account-id"] = credentials.accountId;
   return headers;
@@ -419,7 +424,7 @@ function codexModelHeaders(credentials) {
     accept: "application/json",
     connection: "close",
     originator: "codex_cli_rs",
-    "user-agent": CODEX_CLI_USER_AGENT
+    "user-agent": `codex_cli_rs/${codexClientVersion()} (Mac OS 26.3.1; arm64) iTerm.app/3.6.9`
   };
 }
 
@@ -479,7 +484,7 @@ function parseCodexQuota(body) {
 
 async function fetchCodexModels(channel) {
   const url = new URL(`${CODEX_UPSTREAM_BASE}/models`);
-  url.searchParams.set("client_version", CODEX_CLIENT_VERSION);
+  url.searchParams.set("client_version", codexClientVersion());
   const requestUrl = url.toString();
   const requestModels = async credentials => {
     try {

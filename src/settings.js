@@ -1,4 +1,7 @@
+const { CODEX_CLIENT_VERSION } = require("./codex-client-config");
+
 const DEFAULT_SETTINGS = Object.freeze({
+  codexClientVersion: CODEX_CLIENT_VERSION,
   textTimeoutSeconds: 120,
   imageTimeoutSeconds: 300,
   circuitFailureThreshold: 3,
@@ -18,6 +21,7 @@ const SETTING_RANGES = Object.freeze({
 
 function normalizeSettings(input = {}) {
   const settings = {};
+  settings.codexClientVersion = normalizeCodexClientVersion(input.codexClientVersion) || DEFAULT_SETTINGS.codexClientVersion;
   for (const [key, fallback] of Object.entries(SETTING_RANGES)) {
     const defaultValue = DEFAULT_SETTINGS[key];
     const [min, max] = SETTING_RANGES[key];
@@ -32,6 +36,14 @@ function normalizeSettings(input = {}) {
 
 function validateSettings(input = {}) {
   const settings = {};
+  settings.codexClientVersion = input.codexClientVersion === undefined
+    ? DEFAULT_SETTINGS.codexClientVersion
+    : normalizeCodexClientVersion(input.codexClientVersion);
+  if (!settings.codexClientVersion) {
+    const error = new Error("codexClientVersion must be a version such as 0.160.0");
+    error.statusCode = 400;
+    throw error;
+  }
   for (const [key, fallback] of Object.entries(SETTING_RANGES)) {
     const [min, max] = SETTING_RANGES[key];
     const value = input[key] === undefined ? DEFAULT_SETTINGS[key] : Number(input[key]);
@@ -61,6 +73,12 @@ function validateSettings(input = {}) {
     throw error;
   }
   return settings;
+}
+
+function normalizeCodexClientVersion(value) {
+  if (typeof value !== "string") return "";
+  const version = value.trim();
+  return version.length <= 32 && /^\d+\.\d+\.\d+$/.test(version) ? version : "";
 }
 
 function normalizeProxyUrl(value) {

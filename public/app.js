@@ -234,6 +234,7 @@ settingsForm.addEventListener("submit", async event => {
   const payload = Object.fromEntries(numericSettings.map(key => [key, Number(settingsForm.elements[key].value)]));
   payload.outboundProxyEnabled = outboundProxyEnabled.checked;
   payload.outboundProxyUrl = settingsForm.elements.outboundProxyUrl.value.trim();
+  payload.codexClientVersion = settingsForm.elements.codexClientVersion.value.trim();
   submitBtn.disabled = true;
   try {
     settings = await request("/api/settings", { method: "PUT", body: JSON.stringify(payload) });
